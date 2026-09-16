@@ -11,6 +11,20 @@ def test_read_only_command_is_allowed(tmp_path: Path) -> None:
     assert decision.risk == "low"
 
 
+def test_df_inside_workspace_is_low_risk(tmp_path: Path) -> None:
+    request = CommandRequest.from_parts(["df", "-h", "."], tmp_path)
+    decision = decide(request, tmp_path)
+    assert decision.allowed
+    assert decision.risk == "low"
+
+
+def test_df_outside_workspace_requires_approval(tmp_path: Path) -> None:
+    request = CommandRequest.from_parts(["df", "-h", "/"], tmp_path)
+    decision = decide(request, tmp_path)
+    assert not decision.allowed
+    assert decision.risk == "approval-required"
+
+
 def test_stateful_command_requires_approval(tmp_path: Path) -> None:
     request = CommandRequest.from_parts(["python3", "-c", "print('x')"], tmp_path)
     decision = decide(request, tmp_path)
