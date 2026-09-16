@@ -94,18 +94,11 @@ WARPBLACK derives `approved=true` from that label locally.
 
 ### Remote result
 
-WARPBLACK comments on the issue with:
+WARPBLACK posts a comment beginning with `WARPBLACK_RESULT_V1`, followed by a fenced JSON execution-result object, and then closes the issue.
 
-```text
-WARPBLACK_RESULT_V1
-```json
-{...execution result...}
-```
-```
+Long stdout/stderr streams are truncated in the remote comment and accompanied by SHA-256 hashes. The local audit ledger retains correlation hashes.
 
-and then closes the issue. Long stdout/stderr streams are truncated in the remote comment and accompanied by SHA-256 hashes. The local audit ledger retains correlation hashes.
-
-## Correlation
+## Correlation and audit
 
 Every execution has a `request_id`.
 
@@ -115,7 +108,9 @@ For GitHub jobs WARPBLACK uses a deterministic correlation form based on reposit
 github:OWNER/REPO#ISSUE_NUMBER
 ```
 
-This lets a remote issue, local audit record, and returned execution result refer to the same action.
+The local audit ledger is append-only JSONL. It stores correlation metadata, policy outcome, timing and SHA-256 hashes of argv/cwd/stdout/stderr. It intentionally does not store raw command arguments or raw streams.
+
+This lets a remote issue, local audit record, and returned execution result refer to the same action without copying potentially sensitive raw content into the ledger.
 
 ## Compatibility
 
