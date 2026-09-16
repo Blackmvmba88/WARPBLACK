@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from .audit import AuditLedger
 from .executor import TerminalExecutor
 from .models import CommandRequest
 from .policy import PolicyError
@@ -18,6 +20,7 @@ from .policy import PolicyError
 JOB_PROTOCOL = "warpblack-job-v1"
 JOB_LABEL = "warpblack-job"
 APPROVAL_LABEL = "warpblack-approved"
+MAX_REMOTE_STREAM_CHARS = 12_000
 
 
 class GitHubQueueError(RuntimeError):
@@ -35,12 +38,7 @@ class GitHubJob:
 
 
 class GitHubControlPlane:
-    """Pull-based private GitHub issue transport for WARPBLACK jobs.
-
-    The local machine makes only outbound HTTPS requests. The configured
-    repository must be private. Elevated approval is derived from a separate
-    GitHub label rather than trusting an `approved` field in the issue body.
-    """
+    """Pull-based private GitHub issue transport for WARPBLACK jobs."""
 
     def __init__(
         self,
@@ -49,6 +47,7 @@ class GitHubControlPlane:
         repository: str,
         allowed_actor: str,
         workspace_root: str | Path,
+        audit_log: str | Path | None = None,
         api_url: str = "https://api.github.com",
     ) -> None:
         if "/" not in repository:
@@ -62,7 +61,13 @@ class GitHubControlPlane:
         self.allowed_actor = allowed_actor
         self.workspace_root = Path(workspace_root).resolve()
         self.api_url = api_url.rstrip("/")
-        self.executor = TerminalExecutor(self.workspace_root)
+        ledger = AuditLedger(audit_log) if audit_log is not None else None
+        self.executor = TerminalExecutor(
+            self.workspace_root,
+            audit_ledger=ledger,
+            source=f"github:{repository}",
+            actor=allowed_actor,
+        )
 
     def assert_private_repository(self) -> None:
         metadata = self._request_json("GET", f"/repos/{self.repository}")
@@ -114,14 +119,23 @@ class GitHubControlPlane:
             cwd,
             timeout_s=job.timeout_s,
             approved=job.approved,
+            request_id=f"github:{self.repository}#{job.issue_number}",
         )
 
         try:
             result = self.executor.execute(request)
             payload: dict[str, Any] = result.to_dict()
             payload["ok"] = result.exit_code == 0 and not result.timed_out
+            self._bound_stream(payload, "stdout")
+            self._bound_stream(payload, "stderr")
         except (PolicyError, FileNotFoundError, PermissionError, OSError) as exc:
-            payload = {"ok": False, "error": str(exc), "argv": list(job.argv), "cwd": job.cwd}
+            payload = {
+                "ok": False,
+                "request_id": request.request_id,
+                "error": str(exc),
+                "argv": list(job.argv),
+                "cwd": job.cwd,
+            }
 
         body = "WARPBLACK_RESULT_V1\n```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
         self._request_json(
@@ -134,6 +148,15 @@ class GitHubControlPlane:
             f"/repos/{self.repository}/issues/{job.issue_number}",
             {"state": "closed"},
         )
+
+    @staticmethod
+    def _bound_stream(payload: dict[str, Any], key: str) -> None:
+        value = payload.get(key)
+        if not isinstance(value, str) or len(value) <= MAX_REMOTE_STREAM_CHARS:
+            return
+        payload[f"{key}_sha256"] = hashlib.sha256(value.encode("utf-8")).hexdigest()
+        payload[f"{key}_truncated"] = True
+        payload[key] = value[:MAX_REMOTE_STREAM_CHARS]
 
     def _request_json(
         self,
