@@ -28,6 +28,7 @@ READ_ONLY = {
     "rg",
     "which",
     "whereis",
+    "df",
 }
 
 # ripgrep can leave the pure-read model: --pre launches a command for files and
