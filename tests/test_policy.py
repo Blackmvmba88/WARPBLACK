@@ -53,6 +53,12 @@ def test_low_risk_command_cannot_traverse_outside_workspace(tmp_path: Path) -> N
     assert not decision.allowed
 
 
+def test_option_embedded_path_cannot_escape_workspace(tmp_path: Path) -> None:
+    request = CommandRequest.from_parts(["rg", "--ignore-file=/etc/passwd", "needle"], tmp_path)
+    decision = decide(request, tmp_path)
+    assert not decision.allowed
+
+
 def test_find_is_not_implicitly_read_only(tmp_path: Path) -> None:
     request = CommandRequest.from_parts(["find", ".", "-delete"], tmp_path)
     decision = decide(request, tmp_path)
@@ -65,3 +71,25 @@ def test_git_ext_diff_requires_approval(tmp_path: Path) -> None:
     decision = decide(request, tmp_path)
     assert not decision.allowed
     assert decision.risk == "approval-required"
+
+
+def test_git_output_file_requires_approval(tmp_path: Path) -> None:
+    request = CommandRequest.from_parts(["git", "diff", "--output=patch.txt"], tmp_path)
+    decision = decide(request, tmp_path)
+    assert not decision.allowed
+
+
+def test_git_remote_add_is_not_read_only(tmp_path: Path) -> None:
+    request = CommandRequest.from_parts(
+        ["git", "remote", "add", "origin", "https://example.invalid/repo.git"],
+        tmp_path,
+    )
+    decision = decide(request, tmp_path)
+    assert not decision.allowed
+
+
+def test_git_remote_get_url_is_read_only(tmp_path: Path) -> None:
+    request = CommandRequest.from_parts(["git", "remote", "get-url", "origin"], tmp_path)
+    decision = decide(request, tmp_path)
+    assert decision.allowed
+    assert decision.risk == "low"
