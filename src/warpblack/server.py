@@ -27,8 +27,8 @@ class BridgeConfig:
             raise ValueError("WARPBLACK bridge only binds to loopback addresses")
         if len(self.token) < 24:
             raise ValueError("WARPBLACK token must be at least 24 characters")
-        if not (1 <= self.port <= 65535):
-            raise ValueError("port must be between 1 and 65535")
+        if not (0 <= self.port <= 65535):
+            raise ValueError("port must be between 0 and 65535")
 
 
 class WarpHTTPServer(ThreadingHTTPServer):
