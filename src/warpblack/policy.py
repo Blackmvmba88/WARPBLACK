@@ -18,9 +18,6 @@ HARD_DENY = {
     "dd",
 }
 
-# Commands in this set are only low-risk after their path-like arguments are
-# proven to stay inside the configured workspace. `find` is intentionally not
-# here because options such as -delete and -exec can mutate/execute.
 READ_ONLY = {
     "pwd",
     "ls",
@@ -39,12 +36,12 @@ SAFE_GIT_SUBCOMMANDS = {
     "log",
     "show",
     "rev-parse",
-    "remote",
     "ls-files",
     "ls-tree",
 }
 
-GIT_EXECUTION_FLAGS = {"--ext-diff", "--textconv"}
+GIT_RISKY_FLAGS = {"--ext-diff", "--textconv", "--output"}
+GIT_RISKY_PREFIXES = ("--output=",)
 
 
 class PolicyError(RuntimeError):
@@ -68,25 +65,40 @@ def _looks_path_like(value: str) -> bool:
 
 
 def _path_args_stay_inside(request: CommandRequest, workspace_root: Path) -> bool:
-    """Fail closed on explicit path-like arguments that escape the workspace.
-
-    This is deliberately conservative. A false positive only promotes the
-    request to the explicit-approval path; it never silently grants more access.
-    """
+    """Fail closed on explicit or option-embedded paths that escape workspace."""
 
     for raw in request.argv[1:]:
+        candidate_raw = raw
         if raw.startswith("-"):
+            if "=" not in raw:
+                continue
+            candidate_raw = raw.split("=", 1)[1]
+        if not _looks_path_like(candidate_raw):
             continue
-        if not _looks_path_like(raw):
-            continue
-        if raw.startswith("~"):
+        if candidate_raw.startswith("~"):
             return False
-        candidate = Path(raw)
+        candidate = Path(candidate_raw)
         if not candidate.is_absolute():
             candidate = request.cwd / candidate
         if not _inside(workspace_root, candidate):
             return False
     return True
+
+
+def _git_has_risky_flags(argv: tuple[str, ...]) -> bool:
+    for arg in argv[2:]:
+        if arg in GIT_RISKY_FLAGS or arg.startswith(GIT_RISKY_PREFIXES):
+            return True
+    return False
+
+
+def _git_remote_is_read_only(argv: tuple[str, ...]) -> bool:
+    args = argv[2:]
+    if not args:
+        return True
+    if args in (("-v",), ("--verbose",)):
+        return True
+    return args[0] == "get-url"
 
 
 def decide(request: CommandRequest, workspace_root: Path) -> PolicyDecision:
@@ -112,14 +124,16 @@ def decide(request: CommandRequest, workspace_root: Path) -> PolicyDecision:
 
     if program == "git" and len(request.argv) > 1:
         subcommand = request.argv[1].lower()
-        has_execution_flag = any(arg in GIT_EXECUTION_FLAGS for arg in request.argv[2:])
         paths_confined = _path_args_stay_inside(request, workspace_root)
-        if subcommand in SAFE_GIT_SUBCOMMANDS and not has_execution_flag and paths_confined:
+        risky_flags = _git_has_risky_flags(request.argv)
+        safe_subcommand = subcommand in SAFE_GIT_SUBCOMMANDS
+        safe_remote = subcommand == "remote" and _git_remote_is_read_only(request.argv)
+        if (safe_subcommand or safe_remote) and not risky_flags and paths_confined:
             return PolicyDecision(True, f"read-only git {subcommand}", "low")
-        if subcommand in SAFE_GIT_SUBCOMMANDS and not request.approved:
+        if (safe_subcommand or subcommand == "remote") and not request.approved:
             return PolicyDecision(
                 False,
-                "git arguments may execute helpers or escape workspace; explicit approval required",
+                "git arguments may mutate, execute helpers, or escape workspace; approval required",
                 "approval-required",
             )
 
