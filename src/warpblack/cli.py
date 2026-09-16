@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 
+from .audit import AuditLedger
 from .client import WarpClient, WarpClientError
 from .executor import TerminalExecutor
 from .github_queue import GitHubControlPlane, GitHubQueueError, token_from_env
@@ -15,13 +16,23 @@ from .server import BridgeConfig, serve
 
 
 DEFAULT_URL = "http://127.0.0.1:8765"
+DEFAULT_AUDIT_LOG = "~/.warpblack/audit.jsonl"
 TOKEN_ENV = "WARPBLACK_TOKEN"
+
+
+def _add_audit_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--audit-log",
+        default=DEFAULT_AUDIT_LOG,
+        help="Append-only local JSONL audit ledger",
+    )
 
 
 def _add_github_control_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--repo", required=True, help="Private control repo as owner/name")
     parser.add_argument("--actor", required=True, help="Only accept jobs authored by this login")
     parser.add_argument("--workspace", default=".", help="Allowed local workspace root")
+    _add_audit_arg(parser)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,12 +47,14 @@ def build_parser() -> argparse.ArgumentParser:
     execute.add_argument("--cwd", default=".", help="Working directory inside workspace")
     execute.add_argument("--timeout", type=float, default=60.0, help="Timeout in seconds")
     execute.add_argument("--approve", action="store_true", help="Approve stateful/code execution")
+    _add_audit_arg(execute)
     execute.add_argument("argv", nargs=argparse.REMAINDER, help="Command after --")
 
     bridge = sub.add_parser("serve", help="Run authenticated local WARPBLACK bridge")
     bridge.add_argument("--workspace", default=".", help="Allowed workspace root")
     bridge.add_argument("--host", default="127.0.0.1", help="Loopback bind address only")
     bridge.add_argument("--port", type=int, default=8765)
+    _add_audit_arg(bridge)
 
     call = sub.add_parser("call", help="Execute through a running WARPBLACK bridge")
     call.add_argument("--url", default=DEFAULT_URL)
@@ -80,12 +93,17 @@ def _token(required: bool = True) -> str:
     return value
 
 
+def _audit_path(raw: str) -> Path:
+    return Path(raw).expanduser()
+
+
 def _github_control(args: argparse.Namespace) -> GitHubControlPlane:
     return GitHubControlPlane(
         token=token_from_env(),
         repository=args.repo,
         allowed_actor=args.actor,
         workspace_root=Path(args.workspace).resolve(),
+        audit_log=_audit_path(args.audit_log),
     )
 
 
@@ -109,9 +127,13 @@ def main(argv: list[str] | None = None) -> int:
             timeout_s=args.timeout,
             approved=args.approve,
         )
-
+        executor = TerminalExecutor(
+            workspace,
+            audit_ledger=AuditLedger(_audit_path(args.audit_log)),
+            source="cli",
+        )
         try:
-            result = TerminalExecutor(workspace).execute(request)
+            result = executor.execute(request)
         except (PolicyError, FileNotFoundError, PermissionError) as exc:
             print(json.dumps({"ok": False, "error": str(exc)}))
             return 3
@@ -128,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
                 token=_token(),
                 host=args.host,
                 port=args.port,
+                audit_log=_audit_path(args.audit_log),
             )
         except ValueError as exc:
             print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
@@ -139,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
                     "service": "warpblack",
                     "listen": f"http://{config.host}:{config.port}",
                     "workspace": str(config.workspace_root),
+                    "audit_log": str(config.audit_log),
                 }
             ),
             flush=True,
