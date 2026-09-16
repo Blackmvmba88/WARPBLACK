@@ -53,8 +53,33 @@ def test_low_risk_command_cannot_traverse_outside_workspace(tmp_path: Path) -> N
     assert not decision.allowed
 
 
+def test_simple_symlink_operand_cannot_escape_workspace(tmp_path: Path) -> None:
+    outside = tmp_path.parent / "outside-secret.txt"
+    outside.write_text("secret", encoding="utf-8")
+    link = tmp_path / "innocent.txt"
+    link.symlink_to(outside)
+
+    request = CommandRequest.from_parts(["cat", "innocent.txt"], tmp_path)
+    decision = decide(request, tmp_path)
+    assert not decision.allowed
+    assert decision.risk == "approval-required"
+
+
 def test_option_embedded_path_cannot_escape_workspace(tmp_path: Path) -> None:
     request = CommandRequest.from_parts(["rg", "--ignore-file=/etc/passwd", "needle"], tmp_path)
+    decision = decide(request, tmp_path)
+    assert not decision.allowed
+
+
+def test_ripgrep_preprocessor_requires_approval(tmp_path: Path) -> None:
+    request = CommandRequest.from_parts(["rg", "--pre", "cat", "needle", "."], tmp_path)
+    decision = decide(request, tmp_path)
+    assert not decision.allowed
+    assert decision.risk == "approval-required"
+
+
+def test_ripgrep_compressed_search_requires_approval(tmp_path: Path) -> None:
+    request = CommandRequest.from_parts(["rg", "-z", "needle", "."], tmp_path)
     decision = decide(request, tmp_path)
     assert not decision.allowed
 
