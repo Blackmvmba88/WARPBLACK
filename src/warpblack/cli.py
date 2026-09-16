@@ -8,6 +8,7 @@ import sys
 
 from .client import WarpClient, WarpClientError
 from .executor import TerminalExecutor
+from .github_queue import GitHubControlPlane, GitHubQueueError, token_from_env
 from .models import CommandRequest
 from .policy import PolicyError
 from .server import BridgeConfig, serve
@@ -15,6 +16,12 @@ from .server import BridgeConfig, serve
 
 DEFAULT_URL = "http://127.0.0.1:8765"
 TOKEN_ENV = "WARPBLACK_TOKEN"
+
+
+def _add_github_control_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--repo", required=True, help="Private control repo as owner/name")
+    parser.add_argument("--actor", required=True, help="Only accept jobs authored by this login")
+    parser.add_argument("--workspace", default=".", help="Allowed local workspace root")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -49,6 +56,13 @@ def build_parser() -> argparse.ArgumentParser:
     capabilities = sub.add_parser("capabilities", help="Read authenticated bridge capabilities")
     capabilities.add_argument("--url", default=DEFAULT_URL)
 
+    github_once = sub.add_parser("github-once", help="Process at most one private GitHub job")
+    _add_github_control_args(github_once)
+
+    github_watch = sub.add_parser("github-watch", help="Watch a private GitHub repo for jobs")
+    _add_github_control_args(github_watch)
+    github_watch.add_argument("--poll", type=float, default=5.0, help="Polling interval in seconds")
+
     return parser
 
 
@@ -64,6 +78,15 @@ def _token(required: bool = True) -> str:
     if required and not value:
         raise ValueError(f"{TOKEN_ENV} is required")
     return value
+
+
+def _github_control(args: argparse.Namespace) -> GitHubControlPlane:
+    return GitHubControlPlane(
+        token=token_from_env(),
+        repository=args.repo,
+        allowed_actor=args.actor,
+        workspace_root=Path(args.workspace).resolve(),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -147,6 +170,22 @@ def main(argv: list[str] | None = None) -> int:
 
         print(json.dumps(payload, ensure_ascii=False))
         return 0 if payload.get("ok") else 1
+
+    if args.command in {"github-once", "github-watch"}:
+        try:
+            control = _github_control(args)
+            control.assert_private_repository()
+            if args.command == "github-once":
+                processed = control.run_once()
+                print(json.dumps({"ok": True, "processed": processed}))
+                return 0
+            control.watch(poll_interval_s=args.poll)
+            return 0
+        except KeyboardInterrupt:
+            return 0
+        except (ValueError, GitHubQueueError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 3
 
     return 2
 
