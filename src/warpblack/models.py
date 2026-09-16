@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Sequence
+from uuid import uuid4
 
 
 @dataclass(frozen=True)
@@ -11,6 +12,7 @@ class CommandRequest:
     cwd: Path
     timeout_s: float = 60.0
     approved: bool = False
+    request_id: str = ""
 
     @classmethod
     def from_parts(
@@ -20,10 +22,14 @@ class CommandRequest:
         *,
         timeout_s: float = 60.0,
         approved: bool = False,
+        request_id: str | None = None,
     ) -> "CommandRequest":
         if not argv:
             raise ValueError("argv must not be empty")
-        return cls(tuple(argv), Path(cwd), timeout_s, approved)
+        correlation_id = request_id or uuid4().hex
+        if not correlation_id.strip():
+            raise ValueError("request_id must not be empty")
+        return cls(tuple(argv), Path(cwd), timeout_s, approved, correlation_id)
 
 
 @dataclass(frozen=True)
@@ -35,6 +41,7 @@ class PolicyDecision:
 
 @dataclass(frozen=True)
 class ExecutionResult:
+    request_id: str
     argv: tuple[str, ...]
     cwd: str
     exit_code: int | None
@@ -43,6 +50,7 @@ class ExecutionResult:
     duration_ms: int
     timed_out: bool
     policy_reason: str
+    policy_risk: str
 
     def to_dict(self) -> dict[str, object]:
         data = asdict(self)
