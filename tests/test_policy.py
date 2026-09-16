@@ -38,3 +38,30 @@ def test_cwd_must_stay_inside_workspace(tmp_path: Path) -> None:
     request = CommandRequest.from_parts(["ls"], outside)
     decision = decide(request, tmp_path)
     assert not decision.allowed
+
+
+def test_low_risk_command_cannot_read_absolute_path_outside_workspace(tmp_path: Path) -> None:
+    request = CommandRequest.from_parts(["cat", "/etc/passwd"], tmp_path)
+    decision = decide(request, tmp_path)
+    assert not decision.allowed
+    assert decision.risk == "approval-required"
+
+
+def test_low_risk_command_cannot_traverse_outside_workspace(tmp_path: Path) -> None:
+    request = CommandRequest.from_parts(["cat", "../../secret.txt"], tmp_path)
+    decision = decide(request, tmp_path)
+    assert not decision.allowed
+
+
+def test_find_is_not_implicitly_read_only(tmp_path: Path) -> None:
+    request = CommandRequest.from_parts(["find", ".", "-delete"], tmp_path)
+    decision = decide(request, tmp_path)
+    assert not decision.allowed
+    assert decision.risk == "approval-required"
+
+
+def test_git_ext_diff_requires_approval(tmp_path: Path) -> None:
+    request = CommandRequest.from_parts(["git", "diff", "--ext-diff"], tmp_path)
+    decision = decide(request, tmp_path)
+    assert not decision.allowed
+    assert decision.risk == "approval-required"
