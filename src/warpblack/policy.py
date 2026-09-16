@@ -30,6 +30,16 @@ READ_ONLY = {
     "whereis",
 }
 
+# ripgrep can leave the pure-read model: --pre launches a command for files and
+# compressed-search mode can spawn external decompressors. These require the
+# elevated approval path instead of inheriting READ_ONLY trust.
+READ_ONLY_RISKY_FLAGS = {
+    "rg": {"--pre", "-z", "--search-zip"},
+}
+READ_ONLY_RISKY_PREFIXES = {
+    "rg": ("--pre=",),
+}
+
 SAFE_GIT_SUBCOMMANDS = {
     "status",
     "diff",
@@ -64,8 +74,15 @@ def _looks_path_like(value: str) -> bool:
     )
 
 
+def _should_check_as_path(value: str, cwd: Path) -> bool:
+    if _looks_path_like(value):
+        return True
+    candidate = cwd / value
+    return candidate.exists() or candidate.is_symlink()
+
+
 def _path_args_stay_inside(request: CommandRequest, workspace_root: Path) -> bool:
-    """Fail closed on explicit or option-embedded paths that escape workspace."""
+    """Fail closed on explicit, existing/symlink, or option-embedded paths."""
 
     for raw in request.argv[1:]:
         candidate_raw = raw
@@ -73,7 +90,7 @@ def _path_args_stay_inside(request: CommandRequest, workspace_root: Path) -> boo
             if "=" not in raw:
                 continue
             candidate_raw = raw.split("=", 1)[1]
-        if not _looks_path_like(candidate_raw):
+        if not _should_check_as_path(candidate_raw, request.cwd):
             continue
         if candidate_raw.startswith("~"):
             return False
@@ -83,6 +100,12 @@ def _path_args_stay_inside(request: CommandRequest, workspace_root: Path) -> boo
         if not _inside(workspace_root, candidate):
             return False
     return True
+
+
+def _read_only_has_risky_flags(program: str, argv: tuple[str, ...]) -> bool:
+    exact = READ_ONLY_RISKY_FLAGS.get(program, set())
+    prefixes = READ_ONLY_RISKY_PREFIXES.get(program, ())
+    return any(arg in exact or arg.startswith(prefixes) for arg in argv[1:])
 
 
 def _git_has_risky_flags(argv: tuple[str, ...]) -> bool:
@@ -113,12 +136,14 @@ def decide(request: CommandRequest, workspace_root: Path) -> PolicyDecision:
         return PolicyDecision(False, f"'{program}' is hard-denied", "blocked")
 
     if program in READ_ONLY:
-        if _path_args_stay_inside(request, workspace_root):
+        risky_flags = _read_only_has_risky_flags(program, request.argv)
+        paths_confined = _path_args_stay_inside(request, workspace_root)
+        if not risky_flags and paths_confined:
             return PolicyDecision(True, "read-only command confined to workspace", "low")
         if not request.approved:
             return PolicyDecision(
                 False,
-                "path-like argument may escape workspace; explicit approval required",
+                "read command may execute helpers or escape workspace; explicit approval required",
                 "approval-required",
             )
 
