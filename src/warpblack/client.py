@@ -29,19 +29,23 @@ class WarpClient:
         cwd: str = ".",
         timeout_s: float = 60.0,
         approved: bool = False,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         if not argv:
             raise ValueError("argv must not be empty")
+        payload: dict[str, Any] = {
+            "argv": list(argv),
+            "cwd": cwd,
+            "timeout_s": timeout_s,
+            "approved": approved,
+        }
+        if request_id is not None:
+            payload["request_id"] = request_id
         return self._request(
             "POST",
             "/v1/execute",
             authenticated=True,
-            payload={
-                "argv": list(argv),
-                "cwd": cwd,
-                "timeout_s": timeout_s,
-                "approved": approved,
-            },
+            payload=payload,
         )
 
     def _request(
@@ -73,8 +77,8 @@ class WarpClient:
         except HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace")
             try:
-                payload = json.loads(raw)
-                message = str(payload.get("error", raw))
+                error_payload = json.loads(raw)
+                message = str(error_payload.get("error", raw))
             except json.JSONDecodeError:
                 message = raw or str(exc)
             raise WarpClientError(f"bridge returned HTTP {exc.code}: {message}") from exc
