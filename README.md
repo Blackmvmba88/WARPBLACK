@@ -41,8 +41,50 @@ WARPBLACK starts fail-closed:
 - timeouts are mandatory
 - environment inheritance is minimized
 - dangerous command families are denied by policy
-- mutating/high-impact actions can require explicit approval
+- mutating/high-impact actions require explicit approval
 - every execution produces a structured audit result
+
+Hard-denied command families currently include privileged/system-destructive tools such as `sudo`, `dd`, `mkfs`, `fdisk`, shutdown and reboot commands.
+
+## Install
+
+Requires Python 3.11+.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e '.[dev]'
+```
+
+## Use
+
+Read-only command:
+
+```bash
+warpblack exec --workspace . --cwd . -- git status
+```
+
+Code execution or a potentially mutating command requires explicit approval:
+
+```bash
+warpblack exec --workspace . --cwd . --approve -- pytest -q
+```
+
+The result is emitted as JSON so another process can consume it deterministically:
+
+```json
+{
+  "ok": true,
+  "argv": ["git", "status"],
+  "cwd": "/workspace/project",
+  "exit_code": 0,
+  "stdout": "...",
+  "stderr": "",
+  "duration_ms": 12,
+  "timed_out": false,
+  "policy_reason": "read-only git status"
+}
+```
 
 ## MVP
 
@@ -54,8 +96,13 @@ The first milestone provides:
 4. JSON result envelope
 5. CLI entrypoint
 6. tests for allowed/denied commands and workspace confinement
+7. CI with Ruff + Pytest
 
-Later milestones will add repository-aware planning, diffs, test runners, process observation, long-running jobs, and a local authenticated bridge for XarvisCore.
+## Next
+
+The next layer is the **local authenticated bridge** that lets XarvisCore or another AI planner submit a structured command request and receive execution evidence without scraping a terminal window.
+
+After that come repository-aware planning, diffs, test runners, process observation, long-running jobs, and certification manifests.
 
 ## Status
 
