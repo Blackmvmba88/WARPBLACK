@@ -35,6 +35,7 @@ def test_health_and_capabilities(tmp_path: Path) -> None:
         capabilities = client.capabilities()
         assert capabilities["ok"] is True
         assert "execute" in capabilities["capabilities"]
+        assert "audit-correlation" in capabilities["capabilities"]
 
 
 def test_wrong_token_is_rejected(tmp_path: Path) -> None:
@@ -50,11 +51,16 @@ def test_read_only_execution_round_trip(tmp_path: Path) -> None:
 
     with running_bridge(tmp_path) as base_url:
         client = WarpClient(base_url, TOKEN)
-        result = client.execute(["cat", "marker.txt"])
+        result = client.execute(
+            ["cat", "marker.txt"],
+            request_id="bridge-round-trip-1",
+        )
 
     assert result["ok"] is True
+    assert result["request_id"] == "bridge-round-trip-1"
     assert result["stdout"] == "mamba\n"
     assert result["exit_code"] == 0
+    assert result["policy_risk"] == "low"
 
 
 def test_workspace_escape_is_rejected_over_bridge(tmp_path: Path) -> None:
