@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .audit import AuditLedger
 from .executor import TerminalExecutor
 from .models import CommandRequest
 from .policy import PolicyError
@@ -21,6 +22,7 @@ class BridgeConfig:
     token: str
     host: str = "127.0.0.1"
     port: int = 8765
+    audit_log: Path | None = None
 
     def __post_init__(self) -> None:
         if self.host not in {"127.0.0.1", "localhost", "::1"}:
@@ -34,7 +36,12 @@ class BridgeConfig:
 class WarpHTTPServer(ThreadingHTTPServer):
     def __init__(self, config: BridgeConfig):
         self.config = config
-        self.executor = TerminalExecutor(config.workspace_root)
+        ledger = AuditLedger(config.audit_log) if config.audit_log is not None else None
+        self.executor = TerminalExecutor(
+            config.workspace_root,
+            audit_ledger=ledger,
+            source="http",
+        )
         super().__init__((config.host, config.port), WarpRequestHandler)
 
 
@@ -42,7 +49,6 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
     server: WarpHTTPServer
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
-        # Avoid leaking command payloads/tokens through default request logging.
         return
 
     def _json(self, status: int, payload: dict[str, Any]) -> None:
@@ -59,8 +65,7 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
         prefix = "Bearer "
         if not header.startswith(prefix):
             return False
-        supplied = header[len(prefix) :]
-        return hmac.compare_digest(supplied, self.server.config.token)
+        return hmac.compare_digest(header[len(prefix) :], self.server.config.token)
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path == "/v1/health":
@@ -74,7 +79,6 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-
         if self.path == "/v1/capabilities":
             if not self._authorized():
                 self._json(401, {"ok": False, "error": "unauthorized"})
@@ -83,19 +87,17 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
                 200,
                 {
                     "ok": True,
-                    "capabilities": ["execute"],
+                    "capabilities": ["execute", "audit-correlation"],
                     "contract": "READ→PLAN→EXECUTE→READ BACK→COMPARE→CERTIFY",
                 },
             )
             return
-
         self._json(404, {"ok": False, "error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path != "/v1/execute":
             self._json(404, {"ok": False, "error": "not found"})
             return
-
         if not self._authorized():
             self._json(401, {"ok": False, "error": "unauthorized"})
             return
@@ -105,7 +107,6 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
         except ValueError:
             self._json(400, {"ok": False, "error": "invalid content length"})
             return
-
         if length <= 0 or length > MAX_BODY_BYTES:
             self._json(413, {"ok": False, "error": "request body size rejected"})
             return
@@ -114,7 +115,7 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             request = self._request_from_payload(payload)
             result = self.server.executor.execute(request)
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             self._json(400, {"ok": False, "error": str(exc)})
             return
         except PolicyError as exc:
@@ -131,33 +132,32 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
     def _request_from_payload(self, payload: object) -> CommandRequest:
         if not isinstance(payload, dict):
             raise TypeError("request body must be a JSON object")
-
         argv = payload.get("argv")
         if not isinstance(argv, list) or not argv or not all(isinstance(x, str) for x in argv):
             raise TypeError("argv must be a non-empty list of strings")
-
         cwd_value = payload.get("cwd", ".")
         if not isinstance(cwd_value, str):
             raise TypeError("cwd must be a string")
-
         timeout_s = payload.get("timeout_s", 60.0)
         if not isinstance(timeout_s, (int, float)):
             raise TypeError("timeout_s must be numeric")
-
         approved = payload.get("approved", False)
         if not isinstance(approved, bool):
             raise TypeError("approved must be boolean")
+        request_id = payload.get("request_id")
+        if request_id is not None and not isinstance(request_id, str):
+            raise TypeError("request_id must be a string")
 
         root = self.server.config.workspace_root.resolve()
         cwd = Path(cwd_value)
         if not cwd.is_absolute():
             cwd = root / cwd
-
         return CommandRequest.from_parts(
             argv,
             cwd,
             timeout_s=float(timeout_s),
             approved=approved,
+            request_id=request_id,
         )
 
 
