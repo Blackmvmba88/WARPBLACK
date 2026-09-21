@@ -48,6 +48,30 @@ class WarpClient:
             payload=payload,
         )
 
+    def absorb_readme(
+        self,
+        *,
+        message: str,
+        project_name: str | None = None,
+        confirmed: Sequence[str] = (),
+        derived: Sequence[str] = (),
+        proposed: Sequence[str] = (),
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "message": message,
+            "confirmed": list(confirmed),
+            "derived": list(derived),
+            "proposed": list(proposed),
+        }
+        if project_name is not None:
+            payload["project_name"] = project_name
+        return self._request(
+            "POST",
+            "/v1/readme/absorb",
+            authenticated=True,
+            payload=payload,
+        )
+
     def _request(
         self,
         method: str,
