@@ -45,7 +45,7 @@ def test_construct_applies_patch_runs_checks_and_returns_diff(tmp_path: Path) ->
     assert result.to_dict()["ok"] is True
     assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "hello\n"
     assert result.checks[0].stdout == "hello\n"
-    assert "hello.txt" in result.diff_stat.stdout
+    assert "hello.txt" in result.workspace_status.stdout
     assert (tmp_path / ".warpblack/tasks/task-001/task.json").exists()
 
 
