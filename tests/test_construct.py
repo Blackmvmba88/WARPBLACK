@@ -15,7 +15,6 @@ def _git_init(path: Path) -> None:
 def _hello_patch() -> str:
     return """diff --git a/hello.txt b/hello.txt
 new file mode 100644
-index 0000000..ce01362
 --- /dev/null
 +++ b/hello.txt
 @@ -0,0 +1 @@
