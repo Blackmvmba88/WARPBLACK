@@ -143,6 +143,54 @@ bridge the same flow is available with `warpblack absorb-call` and
 Absorption is intentionally non-executing: it does not run shell commands, change application
 code, push, merge, or publish. Those remain separate explicit actions.
 
+## Explicit construction mode
+
+The second trigger is `constrúyelo`. Construction does not ask a local agent to invent changes.
+Instead, the planner supplies a unified diff plus validation commands and WARPBLACK acts as the
+bounded local actuator:
+
+```text
+absorbed project state
+        ↓
+AI/planner produces objective + patch + checks
+        ↓
+"constrúyelo"
+        ↓
+git apply --check
+        ↓
+git apply
+        ↓
+validation checks
+        ↓
+git status + diff stat
+        ↓
+structured report
+```
+
+Example:
+
+```bash
+warpblack construct \
+  --workspace /path/to/project \
+  --message "constrúyelo" \
+  --objective "add the health endpoint" \
+  --patch-file /tmp/change.patch \
+  --check-json '["pytest","-q"]'
+```
+
+Through a running local bridge use `warpblack construct-call` or `POST /v1/construct`.
+
+Construction safeguards:
+
+- the explicit `constrúyelo` trigger is mandatory
+- patches against `.git/`, `.warpblack/`, absolute paths, or parent-directory escapes are rejected
+- the patch is checked before application
+- validation stops on the first failure and returns `needs-review`
+- failed validation leaves the working tree intact for inspection; it does not silently revert
+- every task stores a local manifest and SHA-256 hashes under `.warpblack/tasks/<task-id>/`
+- read-back evidence includes `git status --short` and `git diff --stat`
+- no push, merge, or publish is implied by construction
+
 ## Remote control plane via private GitHub repo
 
 The remote mode solves the cloud-to-local boundary without exposing an inbound port. WARPBLACK polls a **private** GitHub repository over outbound HTTPS, accepts only jobs created by an allowlisted GitHub actor, executes them through the same policy engine, comments the structured result, and closes the issue.
