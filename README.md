@@ -298,6 +298,21 @@ WARPBLACK now includes:
 15. threat model and protocol documentation
 16. GitHub Actions workflow for Ruff + Pytest
 
+## v0.3 candidate
+
+The current feature branch adds the conversational-to-repository bridge:
+
+1. incremental README/project-memory absorption
+2. magic materialization trigger: `dame el README`
+3. explicit construction trigger: `constrúyelo`
+4. planner-produced patch application through the existing policy boundary
+5. sequential validation checks plus workspace read-back evidence
+6. authenticated HTTP endpoints for absorb and construct
+7. private GitHub queue envelopes for absorb, construct, and command jobs
+8. separate remote approval label for all construct execution
+9. idempotency-friendly deterministic remote task IDs
+10. control-repository bootstrap for required labels
+
 ## Next
 
 The next high-value layers are:
