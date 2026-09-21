@@ -282,13 +282,13 @@ class PatchConstructor:
                 break
 
         workspace_status = self._execute(
-            ["git", "status", "--short"],
+            ["git", "status", "--short", "--", ".", ":(exclude).warpblack"],
             timeout_s=min(timeout_s, 60.0),
             request_id=f"{task}:status",
             approved=False,
         )
         diff_stat = self._execute(
-            ["git", "diff", "--stat"],
+            ["git", "diff", "--stat", "--", ".", ":(exclude).warpblack"],
             timeout_s=min(timeout_s, 60.0),
             request_id=f"{task}:diff-stat",
             approved=False,
