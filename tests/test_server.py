@@ -112,7 +112,6 @@ def test_construct_round_trip_over_bridge(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     patch = """diff --git a/bridge.txt b/bridge.txt
 new file mode 100644
-index 0000000..b1e6722
 --- /dev/null
 +++ b/bridge.txt
 @@ -0,0 +1 @@
