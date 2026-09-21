@@ -38,6 +38,10 @@ def test_health_and_capabilities(tmp_path: Path) -> None:
         assert "audit-correlation" in capabilities["capabilities"]
         assert "readme-absorb" in capabilities["capabilities"]
         assert "construct-patch" in capabilities["capabilities"]
+        assert "intent-plan" in capabilities["capabilities"]
+        assert "intent-execute" in capabilities["capabilities"]
+        registered = {item["name"] for item in capabilities["registered"]}
+        assert registered == {"files.read", "git.status"}
 
 
 def test_wrong_token_is_rejected(tmp_path: Path) -> None:
@@ -132,3 +136,42 @@ new file mode 100644
     assert result["status"] == "done"
     assert (tmp_path / "bridge.txt").read_text(encoding="utf-8") == "bridge\n"
     assert "bridge.txt" in result["workspace_status"]["stdout"]
+
+
+def test_structured_intent_round_trip(tmp_path: Path) -> None:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    marker = tmp_path / "marker.txt"
+    marker.write_text("mamba\n", encoding="utf-8")
+
+    with running_bridge(tmp_path) as base_url:
+        client = WarpClient(base_url, TOKEN)
+
+        plan = client.plan_intent(
+            "files.read",
+            target="marker.txt",
+            project="Bridge Demo",
+            request_id="plan-read-1",
+        )
+        assert plan["ok"] is True
+        assert plan["plan"]["capability"] == "files.read"
+        assert plan["plan"]["mutates"] is False
+
+        read_result = client.execute_intent(
+            "files.read",
+            target="marker.txt",
+            project="Bridge Demo",
+            request_id="read-round-trip-1",
+        )
+        assert read_result["ok"] is True
+        assert read_result["evidence"]["content"] == "mamba\n"
+
+        status_result = client.execute_intent(
+            "git.status",
+            target=".",
+            request_id="git-status-round-trip-1",
+        )
+        assert status_result["ok"] is True
+        assert status_result["evidence"]["worktree_dirty"] is True
+        assert "marker.txt" in status_result["evidence"]["stdout"]
