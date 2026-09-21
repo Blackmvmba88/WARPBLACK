@@ -213,6 +213,7 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
                 checks=checks,
                 timeout_s=float(timeout_s),
                 task_id=task_id,
+                approved=True,
             )
         return result.to_dict()
 
