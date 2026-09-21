@@ -72,6 +72,32 @@ class WarpClient:
             payload=payload,
         )
 
+    def construct(
+        self,
+        *,
+        message: str,
+        objective: str,
+        patch: str,
+        checks: Sequence[Sequence[str]] = (),
+        timeout_s: float = 120.0,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "message": message,
+            "objective": objective,
+            "patch": patch,
+            "checks": [list(item) for item in checks],
+            "timeout_s": timeout_s,
+        }
+        if task_id is not None:
+            payload["task_id"] = task_id
+        return self._request(
+            "POST",
+            "/v1/construct",
+            authenticated=True,
+            payload=payload,
+        )
+
     def _request(
         self,
         method: str,
