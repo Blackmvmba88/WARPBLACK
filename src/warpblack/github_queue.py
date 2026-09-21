@@ -113,6 +113,49 @@ class GitHubControlPlane:
                 "control-plane repository must be private; refusing to expose terminal jobs"
             )
 
+    def ensure_control_labels(self) -> dict[str, list[str]]:
+        raw = self._request_json("GET", f"/repos/{self.repository}/labels?per_page=100")
+        if not isinstance(raw, list):
+            raise GitHubQueueError("unexpected GitHub labels response")
+        existing = {
+            item.get("name")
+            for item in raw
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        specs = {
+            JOB_LABEL: {
+                "color": "5319e7",
+                "description": "WARPBLACK control-plane job",
+            },
+            APPROVAL_LABEL: {
+                "color": "d93f0b",
+                "description": "Explicit approval for elevated WARPBLACK execution",
+            },
+        }
+        created: list[str] = []
+        present: list[str] = []
+        for name, spec in specs.items():
+            if name in existing:
+                present.append(name)
+                continue
+            self._request_json(
+                "POST",
+                f"/repos/{self.repository}/labels",
+                {"name": name, **spec},
+            )
+            created.append(name)
+        return {"created": created, "existing": present}
+
+    def bootstrap(self) -> dict[str, object]:
+        self.assert_private_repository()
+        labels = self.ensure_control_labels()
+        return {
+            "ok": True,
+            "repository": self.repository,
+            "private": True,
+            "labels": labels,
+        }
+
     def pending_jobs(self) -> list[GitHubJob]:
         label = quote(JOB_LABEL, safe="")
         issues = self._request_json(
