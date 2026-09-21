@@ -201,6 +201,16 @@ Environment:
 export WARPBLACK_GITHUB_TOKEN="your-fine-grained-token"
 ```
 
+Bootstrap the private control repository once (verifies privacy and creates the required
+`warpblack-job` and `warpblack-approved` labels):
+
+```bash
+warpblack github-bootstrap \
+  --repo OWNER/PRIVATE_CONTROL_REPO \
+  --actor YOUR_GITHUB_LOGIN \
+  --workspace /path/to/workspace
+```
+
 Process one job:
 
 ```bash
@@ -231,7 +241,37 @@ A job is an issue carrying the `warpblack-job` label whose body contains only JS
 }
 ```
 
-The JSON cannot self-approve elevated execution. A mutating/code-execution job becomes approved only when the separate `warpblack-approved` label is present.
+The queue accepts three protocol envelopes under the same `warpblack-job` label:
+
+**Absorb context** (no elevated approval required):
+
+```json
+{
+  "protocol": "warpblack-absorb-v1",
+  "message": "dame el README",
+  "project_name": "MEngine",
+  "confirmed": ["Live microphone input"],
+  "derived": ["Audio buffering is required"],
+  "proposed": ["Consider AudioWorklet"]
+}
+```
+
+**Construct a change** (requires the separate `warpblack-approved` label):
+
+```json
+{
+  "protocol": "warpblack-construct-v1",
+  "message": "constrúyelo",
+  "objective": "Add a health endpoint",
+  "patch": "diff --git ...",
+  "checks": [["pytest", "-q"]],
+  "timeout_s": 120
+}
+```
+
+**Execute a command** keeps the existing `warpblack-job-v1` envelope.
+
+The JSON cannot self-approve elevated execution. A construct or mutating/code-execution job becomes approved only when the separate `warpblack-approved` label is present. README absorption stays non-executing and does not need that label.
 
 Remote stdout/stderr are bounded before being posted back. Truncated streams carry SHA-256 hashes so the returned evidence remains correlatable.
 
