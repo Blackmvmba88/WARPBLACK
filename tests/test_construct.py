@@ -6,6 +6,7 @@ import subprocess
 import pytest
 
 from warpblack.construct import PatchConstructor, has_construct_trigger
+from warpblack.policy import PolicyError
 
 
 def _git_init(path: Path) -> None:
@@ -105,7 +106,7 @@ def test_construct_rejects_missing_approval(tmp_path: Path) -> None:
     _git_init(tmp_path)
     constructor = PatchConstructor(tmp_path)
 
-    with pytest.raises(Exception, match="explicit approval"):
+    with pytest.raises(PolicyError, match="explicit approval"):
         constructor.construct(
             message="constrúyelo",
             objective="create marker",
