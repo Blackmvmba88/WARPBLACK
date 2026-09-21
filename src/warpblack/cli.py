@@ -119,6 +119,12 @@ def build_parser() -> argparse.ArgumentParser:
     capabilities = sub.add_parser("capabilities", help="Read authenticated bridge capabilities")
     capabilities.add_argument("--url", default=DEFAULT_URL)
 
+    github_bootstrap = sub.add_parser(
+        "github-bootstrap",
+        help="Verify private control repo and create required labels",
+    )
+    _add_github_control_args(github_bootstrap)
+
     github_once = sub.add_parser("github-once", help="Process at most one private GitHub job")
     _add_github_control_args(github_once)
 
@@ -334,9 +340,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, ensure_ascii=False))
         return 0 if payload.get("ok") else 1
 
-    if args.command in {"github-once", "github-watch"}:
+    if args.command in {"github-bootstrap", "github-once", "github-watch"}:
         try:
             control = _github_control(args)
+            if args.command == "github-bootstrap":
+                print(json.dumps(control.bootstrap(), ensure_ascii=False))
+                return 0
             control.assert_private_repository()
             if args.command == "github-once":
                 processed = control.run_once()
