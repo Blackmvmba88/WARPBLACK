@@ -258,6 +258,7 @@ def main(argv: list[str] | None = None) -> int:
                     checks=checks,
                     timeout_s=args.timeout,
                     task_id=args.task_id,
+                    approved=True,
                 ).to_dict()
             else:
                 client = WarpClient(args.url, _token())
