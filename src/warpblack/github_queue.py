@@ -16,9 +16,11 @@ from .construct import PatchConstructor
 from .executor import TerminalExecutor
 from .models import CommandRequest
 from .policy import PolicyError
+from .readme_absorb import ReadmeAbsorber
 
 
 JOB_PROTOCOL = "warpblack-job-v1"
+ABSORB_PROTOCOL = "warpblack-absorb-v1"
 CONSTRUCT_PROTOCOL = "warpblack-construct-v1"
 JOB_LABEL = "warpblack-job"
 APPROVAL_LABEL = "warpblack-approved"
@@ -40,6 +42,17 @@ class GitHubCommandJob:
 
 
 @dataclass(frozen=True)
+class GitHubAbsorbJob:
+    issue_number: int
+    message: str
+    project_name: str | None
+    confirmed: tuple[str, ...]
+    derived: tuple[str, ...]
+    proposed: tuple[str, ...]
+    actor: str
+
+
+@dataclass(frozen=True)
 class GitHubConstructJob:
     issue_number: int
     message: str
@@ -52,7 +65,7 @@ class GitHubConstructJob:
     actor: str
 
 
-GitHubJob: TypeAlias = GitHubCommandJob | GitHubConstructJob
+GitHubJob: TypeAlias = GitHubCommandJob | GitHubAbsorbJob | GitHubConstructJob
 
 
 class GitHubControlPlane:
@@ -86,9 +99,11 @@ class GitHubControlPlane:
             source=f"github:{repository}",
             actor=allowed_actor,
         )
+        self.absorber = ReadmeAbsorber(self.workspace_root)
         self.constructor = PatchConstructor(
             self.workspace_root,
             executor=self.executor,
+            absorber=self.absorber,
         )
 
     def assert_private_repository(self) -> None:
@@ -135,7 +150,18 @@ class GitHubControlPlane:
     def _execute_job(self, job: GitHubJob) -> None:
         request_id = f"github:{self.repository}#{job.issue_number}"
         try:
-            if isinstance(job, GitHubConstructJob):
+            if isinstance(job, GitHubAbsorbJob):
+                result = self.absorber.ingest(
+                    message=job.message,
+                    project_name=job.project_name,
+                    confirmed=job.confirmed,
+                    derived=job.derived,
+                    proposed=job.proposed,
+                )
+                payload = result.to_dict()
+                payload["request_id"] = request_id
+                payload["job_type"] = "absorb"
+            elif isinstance(job, GitHubConstructJob):
                 if not job.approved:
                     raise PolicyError(
                         f"remote construct requires the separate {APPROVAL_LABEL!r} label"
@@ -174,7 +200,13 @@ class GitHubControlPlane:
             payload = {
                 "ok": False,
                 "request_id": request_id,
-                "job_type": "construct" if isinstance(job, GitHubConstructJob) else "command",
+                "job_type": (
+                    "construct"
+                    if isinstance(job, GitHubConstructJob)
+                    else "absorb"
+                    if isinstance(job, GitHubAbsorbJob)
+                    else "command"
+                ),
                 "error": str(exc),
             }
 
@@ -299,6 +331,31 @@ def parse_issue_job(issue: object, *, allowed_actor: str) -> GitHubJob | None:
             cwd=cwd,
             timeout_s=float(timeout_s),
             approved=approved,
+            actor=allowed_actor,
+        )
+
+    if protocol == ABSORB_PROTOCOL:
+        message = payload.get("message")
+        if not isinstance(message, str):
+            raise GitHubQueueError("absorb message must be a string")
+        project_name = payload.get("project_name")
+        if project_name is not None and not isinstance(project_name, str):
+            raise GitHubQueueError("absorb project_name must be a string")
+
+        classified: dict[str, tuple[str, ...]] = {}
+        for key in ("confirmed", "derived", "proposed"):
+            raw = payload.get(key, [])
+            if not isinstance(raw, list) or not all(isinstance(item, str) for item in raw):
+                raise GitHubQueueError(f"absorb {key} must be a list of strings")
+            classified[key] = tuple(raw)
+
+        return GitHubAbsorbJob(
+            issue_number=issue_number,
+            message=message,
+            project_name=project_name,
+            confirmed=classified["confirmed"],
+            derived=classified["derived"],
+            proposed=classified["proposed"],
             actor=allowed_actor,
         )
 
