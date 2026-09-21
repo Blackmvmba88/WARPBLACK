@@ -122,7 +122,7 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
                 return
             if self.path == "/v1/construct":
                 body = self._construct(payload)
-                self._json(200 if body["ok"] else 409, body)
+                self._json(200, body)
                 return
             request = self._request_from_payload(payload)
             result = self.server.executor.execute(request)
