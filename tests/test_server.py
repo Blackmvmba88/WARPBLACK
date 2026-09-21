@@ -36,6 +36,7 @@ def test_health_and_capabilities(tmp_path: Path) -> None:
         assert capabilities["ok"] is True
         assert "execute" in capabilities["capabilities"]
         assert "audit-correlation" in capabilities["capabilities"]
+        assert "readme-absorb" in capabilities["capabilities"]
 
 
 def test_wrong_token_is_rejected(tmp_path: Path) -> None:
@@ -75,3 +76,30 @@ def test_stateful_execution_requires_explicit_approval(tmp_path: Path) -> None:
         client = WarpClient(base_url, TOKEN)
         with pytest.raises(WarpClientError, match="403"):
             client.execute(["python3", "-c", "print('blocked')"])
+
+
+def test_readme_absorption_round_trip(tmp_path: Path) -> None:
+    with running_bridge(tmp_path) as base_url:
+        client = WarpClient(base_url, TOKEN)
+        first = client.absorb_readme(
+            message="add project context",
+            project_name="Bridge Demo",
+            confirmed=["Only explicit commands may execute actions"],
+            derived=["Persistent project state is required"],
+            proposed=["Add section planning later"],
+        )
+        assert first["ok"] is True
+        assert first["triggered"] is False
+        assert first["output_file"] is None
+
+        triggered = client.absorb_readme(message="bro dame el README")
+
+    assert triggered["ok"] is True
+    assert triggered["triggered"] is True
+    generated = tmp_path / "README.generated.md"
+    assert generated.exists()
+    text = generated.read_text(encoding="utf-8")
+    assert "# Bridge Demo" in text
+    assert "Only explicit commands may execute actions" in text
+    assert "Persistent project state is required" in text
+    assert "Add section planning later" in text
