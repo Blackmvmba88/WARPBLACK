@@ -8,7 +8,7 @@ import unicodedata
 from typing import Iterable
 
 
-TRIGGER_PHRASE = "dame el readme"
+TRIGGER_PHRASES = ("dame el readme", "dame el read me")
 SCHEMA_VERSION = 1
 
 
@@ -22,7 +22,7 @@ def _normalized_text(value: str) -> str:
 def has_readme_trigger(message: str) -> bool:
     """Return True when the magic phrase appears in the incoming message."""
     normalized = _normalized_text(message)
-    return TRIGGER_PHRASE in normalized
+    return any(phrase in normalized for phrase in TRIGGER_PHRASES)
 
 
 def _append_unique(target: list[str], values: Iterable[str]) -> None:
