@@ -37,6 +37,7 @@ def test_health_and_capabilities(tmp_path: Path) -> None:
         assert "execute" in capabilities["capabilities"]
         assert "audit-correlation" in capabilities["capabilities"]
         assert "readme-absorb" in capabilities["capabilities"]
+        assert "construct-patch" in capabilities["capabilities"]
 
 
 def test_wrong_token_is_rejected(tmp_path: Path) -> None:
@@ -103,3 +104,32 @@ def test_readme_absorption_round_trip(tmp_path: Path) -> None:
     assert "Only explicit commands may execute actions" in text
     assert "Persistent project state is required" in text
     assert "Add section planning later" in text
+
+
+def test_construct_round_trip_over_bridge(tmp_path: Path) -> None:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    patch = """diff --git a/bridge.txt b/bridge.txt
+new file mode 100644
+index 0000000..b1e6722
+--- /dev/null
++++ b/bridge.txt
+@@ -0,0 +1 @@
++bridge
+"""
+
+    with running_bridge(tmp_path) as base_url:
+        client = WarpClient(base_url, TOKEN)
+        result = client.construct(
+            message="constrúyelo",
+            objective="create a bridge marker",
+            patch=patch,
+            checks=[["cat", "bridge.txt"]],
+            task_id="bridge-construct-1",
+        )
+
+    assert result["ok"] is True
+    assert result["status"] == "done"
+    assert (tmp_path / "bridge.txt").read_text(encoding="utf-8") == "bridge\n"
+    assert "bridge.txt" in result["workspace_status"]["stdout"]
