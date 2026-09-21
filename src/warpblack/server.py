@@ -9,6 +9,7 @@ import threading
 from typing import Any
 
 from .audit import AuditLedger
+from .construct import PatchConstructor
 from .executor import TerminalExecutor
 from .models import CommandRequest
 from .policy import PolicyError
@@ -45,7 +46,13 @@ class WarpHTTPServer(ThreadingHTTPServer):
             source="http",
         )
         self.readme_absorber = ReadmeAbsorber(config.workspace_root)
+        self.constructor = PatchConstructor(
+            config.workspace_root,
+            executor=self.executor,
+            absorber=self.readme_absorber,
+        )
         self.readme_lock = threading.Lock()
+        self.construct_lock = threading.Lock()
         super().__init__((config.host, config.port), WarpRequestHandler)
 
 
@@ -91,7 +98,7 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
                 200,
                 {
                     "ok": True,
-                    "capabilities": ["execute", "audit-correlation", "readme-absorb"],
+                    "capabilities": ["execute", "audit-correlation", "readme-absorb", "construct-patch"],
                     "contract": "READ→PLAN→EXECUTE→READ BACK→COMPARE→CERTIFY",
                 },
             )
@@ -99,7 +106,7 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
         self._json(404, {"ok": False, "error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path not in {"/v1/execute", "/v1/readme/absorb"}:
+        if self.path not in {"/v1/execute", "/v1/readme/absorb", "/v1/construct"}:
             self._json(404, {"ok": False, "error": "not found"})
             return
         if not self._authorized():
@@ -107,10 +114,15 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            payload = self._read_json_body()
+            max_bytes = MAX_BODY_BYTES if self.path != "/v1/construct" else 768 * 1024
+            payload = self._read_json_body(max_bytes=max_bytes)
             if self.path == "/v1/readme/absorb":
                 body = self._absorb_readme(payload)
                 self._json(200, body)
+                return
+            if self.path == "/v1/construct":
+                body = self._construct(payload)
+                self._json(200 if body["ok"] else 409, body)
                 return
             request = self._request_from_payload(payload)
             result = self.server.executor.execute(request)
@@ -128,12 +140,12 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
         body["ok"] = result.exit_code == 0 and not result.timed_out
         self._json(200 if body["ok"] else 409, body)
 
-    def _read_json_body(self) -> object:
+    def _read_json_body(self, *, max_bytes: int = MAX_BODY_BYTES) -> object:
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as exc:
             raise ValueError("invalid content length") from exc
-        if length <= 0 or length > MAX_BODY_BYTES:
+        if length <= 0 or length > max_bytes:
             raise ValueError("request body size rejected")
         return json.loads(self.rfile.read(length).decode("utf-8"))
 
@@ -161,6 +173,46 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
                 confirmed=classified["confirmed"],
                 derived=classified["derived"],
                 proposed=classified["proposed"],
+            )
+        return result.to_dict()
+
+    def _construct(self, payload: object) -> dict[str, object]:
+        if not isinstance(payload, dict):
+            raise TypeError("request body must be a JSON object")
+        message = payload.get("message")
+        objective = payload.get("objective")
+        patch = payload.get("patch")
+        if not isinstance(message, str):
+            raise TypeError("message must be a string")
+        if not isinstance(objective, str):
+            raise TypeError("objective must be a string")
+        if not isinstance(patch, str):
+            raise TypeError("patch must be a string")
+
+        raw_checks = payload.get("checks", [])
+        if not isinstance(raw_checks, list):
+            raise TypeError("checks must be a list of argv lists")
+        checks: list[list[str]] = []
+        for item in raw_checks:
+            if not isinstance(item, list) or not all(isinstance(arg, str) for arg in item):
+                raise TypeError("each check must be a list of strings")
+            checks.append(item)
+
+        timeout_s = payload.get("timeout_s", 120.0)
+        if not isinstance(timeout_s, (int, float)):
+            raise TypeError("timeout_s must be numeric")
+        task_id = payload.get("task_id")
+        if task_id is not None and not isinstance(task_id, str):
+            raise TypeError("task_id must be a string")
+
+        with self.server.construct_lock:
+            result = self.server.constructor.construct(
+                message=message,
+                objective=objective,
+                patch=patch,
+                checks=checks,
+                timeout_s=float(timeout_s),
+                task_id=task_id,
             )
         return result.to_dict()
 
