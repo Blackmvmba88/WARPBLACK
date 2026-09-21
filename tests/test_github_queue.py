@@ -256,3 +256,35 @@ def test_absorb_job_materializes_readme_without_approval(tmp_path: Path) -> None
     comments = [call for call in control.calls if call[0] == "POST"]
     assert '"job_type": "absorb"' in comments[-1][2]["body"]
     assert '"triggered": true' in comments[-1][2]["body"]
+
+
+def test_bootstrap_creates_only_missing_control_labels(tmp_path: Path) -> None:
+    class FakeControlPlane(GitHubControlPlane):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.created = []
+
+        def _request_json(self, method, path, payload=None):
+            if method == "GET" and path == "/repos/owner/private-control":
+                return {"private": True}
+            if method == "GET" and path.endswith("/labels?per_page=100"):
+                return [{"name": JOB_LABEL}]
+            if method == "POST" and path.endswith("/labels"):
+                self.created.append(payload["name"])
+                return {}
+            raise AssertionError((method, path, payload))
+
+    control = FakeControlPlane(
+        token="token",
+        repository="owner/private-control",
+        allowed_actor="Blackmvmba88",
+        workspace_root=tmp_path,
+    )
+
+    result = control.bootstrap()
+
+    assert result["ok"] is True
+    assert result["private"] is True
+    assert result["labels"]["existing"] == [JOB_LABEL]
+    assert result["labels"]["created"] == [APPROVAL_LABEL]
+    assert control.created == [APPROVAL_LABEL]
