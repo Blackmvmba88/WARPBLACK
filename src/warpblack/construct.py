@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from .executor import TerminalExecutor
 from .models import CommandRequest, ExecutionResult
+from .policy import PolicyError
 from .readme_absorb import ReadmeAbsorber
 
 
@@ -177,9 +178,12 @@ class PatchConstructor:
         checks: Sequence[Sequence[str]] = (),
         timeout_s: float = 120.0,
         task_id: str | None = None,
+        approved: bool = False,
     ) -> ConstructResult:
         if not has_construct_trigger(message):
             raise ValueError("construct requires the explicit 'constrúyelo' trigger")
+        if not approved:
+            raise PolicyError("construct requires explicit approval")
         objective = objective.strip()
         if not objective:
             raise ValueError("objective must not be empty")
