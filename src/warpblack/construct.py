@@ -92,6 +92,7 @@ class ConstructResult:
     apply_check: ExecutionResult
     apply_result: ExecutionResult | None
     checks: tuple[ExecutionResult, ...]
+    workspace_status: ExecutionResult | None
     diff_stat: ExecutionResult | None
 
     def to_dict(self) -> dict[str, object]:
@@ -108,6 +109,9 @@ class ConstructResult:
             "apply_check": self.apply_check.to_dict(),
             "apply_result": self.apply_result.to_dict() if self.apply_result else None,
             "checks": [item.to_dict() for item in self.checks],
+            "workspace_status": (
+                self.workspace_status.to_dict() if self.workspace_status else None
+            ),
             "diff_stat": self.diff_stat.to_dict() if self.diff_stat else None,
         }
 
@@ -236,6 +240,7 @@ class PatchConstructor:
                 apply_check=apply_check,
                 apply_result=None,
                 checks=(),
+                workspace_status=None,
                 diff_stat=None,
             )
 
@@ -258,6 +263,7 @@ class PatchConstructor:
                 apply_check=apply_check,
                 apply_result=apply_result,
                 checks=(),
+                workspace_status=None,
                 diff_stat=None,
             )
 
@@ -275,6 +281,12 @@ class PatchConstructor:
                 status = "needs-review"
                 break
 
+        workspace_status = self._execute(
+            ["git", "status", "--short"],
+            timeout_s=min(timeout_s, 60.0),
+            request_id=f"{task}:status",
+            approved=False,
+        )
         diff_stat = self._execute(
             ["git", "diff", "--stat"],
             timeout_s=min(timeout_s, 60.0),
@@ -293,5 +305,6 @@ class PatchConstructor:
             apply_check=apply_check,
             apply_result=apply_result,
             checks=tuple(check_results),
+            workspace_status=workspace_status,
             diff_stat=diff_stat,
         )
