@@ -8,6 +8,7 @@ import sys
 
 from .audit import AuditLedger
 from .client import WarpClient, WarpClientError
+from .construct import PatchConstructor
 from .executor import TerminalExecutor
 from .github_queue import GitHubControlPlane, GitHubQueueError, token_from_env
 from .models import CommandRequest
@@ -83,6 +84,35 @@ def build_parser() -> argparse.ArgumentParser:
     absorb_call.add_argument("--derived", action="append", default=[], help="Derived item; repeatable")
     absorb_call.add_argument("--proposed", action="append", default=[], help="Proposed item; repeatable")
 
+    construct = sub.add_parser(
+        "construct",
+        help="Apply an explicit AI-produced patch using absorbed project context",
+    )
+    construct.add_argument("--workspace", default=".", help="Project workspace root")
+    construct.add_argument("--message", required=True, help="Must contain the explicit construct trigger")
+    construct.add_argument("--objective", required=True, help="Human-readable task objective")
+    construct.add_argument("--patch-file", required=True, help="Unified diff file to apply")
+    construct.add_argument(
+        "--check-json",
+        action="append",
+        default=[],
+        help='Validation argv as JSON, e.g. ["pytest","-q"]; repeatable',
+    )
+    construct.add_argument("--timeout", type=float, default=120.0)
+    construct.add_argument("--task-id")
+
+    construct_call = sub.add_parser(
+        "construct-call",
+        help="Send an explicit patch construction task through a running bridge",
+    )
+    construct_call.add_argument("--url", default=DEFAULT_URL)
+    construct_call.add_argument("--message", required=True)
+    construct_call.add_argument("--objective", required=True)
+    construct_call.add_argument("--patch-file", required=True)
+    construct_call.add_argument("--check-json", action="append", default=[])
+    construct_call.add_argument("--timeout", type=float, default=120.0)
+    construct_call.add_argument("--task-id")
+
     health = sub.add_parser("health", help="Check bridge liveness")
     health.add_argument("--url", default=DEFAULT_URL)
 
@@ -115,6 +145,18 @@ def _token(required: bool = True) -> str:
 
 def _audit_path(raw: str) -> Path:
     return Path(raw).expanduser()
+
+
+def _parse_checks(raw_values: list[str]) -> list[list[str]]:
+    checks: list[list[str]] = []
+    for raw in raw_values:
+        value = json.loads(raw)
+        if not isinstance(value, list) or not value or not all(
+            isinstance(item, str) and item.strip() for item in value
+        ):
+            raise ValueError("--check-json must be a non-empty JSON array of strings")
+        checks.append(value)
+    return checks
 
 
 def _github_control(args: argparse.Namespace) -> GitHubControlPlane:
@@ -190,6 +232,50 @@ def main(argv: list[str] | None = None) -> int:
                 proposed=args.proposed,
             )
         except (ValueError, WarpClientError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 3
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0 if payload.get("ok") else 1
+
+    if args.command in {"construct", "construct-call"}:
+        try:
+            patch = Path(args.patch_file).read_text(encoding="utf-8")
+            checks = _parse_checks(args.check_json)
+            if args.command == "construct":
+                workspace = Path(args.workspace).resolve()
+                constructor = PatchConstructor(
+                    workspace,
+                    executor=TerminalExecutor(
+                        workspace,
+                        audit_ledger=AuditLedger(_audit_path(DEFAULT_AUDIT_LOG)),
+                        source="construct-cli",
+                    ),
+                )
+                payload = constructor.construct(
+                    message=args.message,
+                    objective=args.objective,
+                    patch=patch,
+                    checks=checks,
+                    timeout_s=args.timeout,
+                    task_id=args.task_id,
+                ).to_dict()
+            else:
+                client = WarpClient(args.url, _token())
+                payload = client.construct(
+                    message=args.message,
+                    objective=args.objective,
+                    patch=patch,
+                    checks=checks,
+                    timeout_s=args.timeout,
+                    task_id=args.task_id,
+                )
+        except (
+            OSError,
+            ValueError,
+            json.JSONDecodeError,
+            WarpClientError,
+            PolicyError,
+        ) as exc:
             print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
             return 3
         print(json.dumps(payload, ensure_ascii=False))
