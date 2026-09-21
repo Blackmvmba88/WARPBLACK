@@ -9,7 +9,9 @@ import threading
 from typing import Any
 
 from .audit import AuditLedger
+from .capabilities import CapabilityError, CapabilityRegistry
 from .construct import PatchConstructor
+from .contracts import IntentEnvelope
 from .executor import TerminalExecutor
 from .models import CommandRequest
 from .policy import PolicyError
@@ -44,6 +46,10 @@ class WarpHTTPServer(ThreadingHTTPServer):
             config.workspace_root,
             audit_ledger=ledger,
             source="http",
+        )
+        self.capability_registry = CapabilityRegistry(
+            config.workspace_root,
+            executor=self.executor,
         )
         self.readme_absorber = ReadmeAbsorber(config.workspace_root)
         self.constructor = PatchConstructor(
@@ -98,7 +104,18 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
                 200,
                 {
                     "ok": True,
-                    "capabilities": ["execute", "audit-correlation", "readme-absorb", "construct-patch"],
+                    "capabilities": [
+                        "execute",
+                        "audit-correlation",
+                        "readme-absorb",
+                        "construct-patch",
+                        "intent-plan",
+                        "intent-execute",
+                    ],
+                    "registered": [
+                        item.to_dict()
+                        for item in self.server.capability_registry.describe()
+                    ],
                     "contract": "READ→PLAN→EXECUTE→READ BACK→COMPARE→CERTIFY",
                 },
             )
@@ -106,7 +123,13 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
         self._json(404, {"ok": False, "error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path not in {"/v1/execute", "/v1/readme/absorb", "/v1/construct"}:
+        if self.path not in {
+            "/v1/execute",
+            "/v1/readme/absorb",
+            "/v1/construct",
+            "/v1/intent/plan",
+            "/v1/intent/execute",
+        }:
             self._json(404, {"ok": False, "error": "not found"})
             return
         if not self._authorized():
@@ -116,6 +139,14 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
         try:
             max_bytes = MAX_BODY_BYTES if self.path != "/v1/construct" else 768 * 1024
             payload = self._read_json_body(max_bytes=max_bytes)
+            if self.path == "/v1/intent/plan":
+                body = self._plan_intent(payload)
+                self._json(200, body)
+                return
+            if self.path == "/v1/intent/execute":
+                body = self._execute_intent(payload)
+                self._json(200 if body["ok"] else 409, body)
+                return
             if self.path == "/v1/readme/absorb":
                 body = self._absorb_readme(payload)
                 self._json(200, body)
@@ -131,6 +162,9 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
             return
         except PolicyError as exc:
             self._json(403, {"ok": False, "error": str(exc)})
+            return
+        except CapabilityError as exc:
+            self._json(422, {"ok": False, "error": str(exc)})
             return
         except (FileNotFoundError, PermissionError, OSError) as exc:
             self._json(422, {"ok": False, "error": str(exc)})
@@ -216,6 +250,15 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
                 approved=True,
             )
         return result.to_dict()
+
+    def _plan_intent(self, payload: object) -> dict[str, object]:
+        intent = IntentEnvelope.from_payload(payload)
+        plan = self.server.capability_registry.plan(intent)
+        return {"ok": True, "plan": plan.to_dict()}
+
+    def _execute_intent(self, payload: object) -> dict[str, object]:
+        intent = IntentEnvelope.from_payload(payload)
+        return self.server.capability_registry.execute(intent).to_dict()
 
     def _request_from_payload(self, payload: object) -> CommandRequest:
         if not isinstance(payload, dict):

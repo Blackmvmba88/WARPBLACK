@@ -22,6 +22,70 @@ class WarpClient:
     def capabilities(self) -> dict[str, Any]:
         return self._request("GET", "/v1/capabilities", authenticated=True)
 
+    def plan_intent(
+        self,
+        intent: str,
+        *,
+        target: str = ".",
+        project: str | None = None,
+        constraints: dict[str, object] | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v1/intent/plan",
+            authenticated=True,
+            payload=self._intent_payload(
+                intent,
+                target=target,
+                project=project,
+                constraints=constraints,
+                request_id=request_id,
+            ),
+        )
+
+    def execute_intent(
+        self,
+        intent: str,
+        *,
+        target: str = ".",
+        project: str | None = None,
+        constraints: dict[str, object] | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v1/intent/execute",
+            authenticated=True,
+            payload=self._intent_payload(
+                intent,
+                target=target,
+                project=project,
+                constraints=constraints,
+                request_id=request_id,
+            ),
+        )
+
+    @staticmethod
+    def _intent_payload(
+        intent: str,
+        *,
+        target: str,
+        project: str | None,
+        constraints: dict[str, object] | None,
+        request_id: str | None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "intent": intent,
+            "target": target,
+            "constraints": constraints or {},
+        }
+        if project is not None:
+            payload["project"] = project
+        if request_id is not None:
+            payload["request_id"] = request_id
+        return payload
+
     def execute(
         self,
         argv: Sequence[str],
