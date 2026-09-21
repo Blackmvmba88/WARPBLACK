@@ -105,6 +105,92 @@ warpblack call -- git status
 
 The HTTP bridge binds only to loopback (`127.0.0.1`, `localhost`, or `::1`). It is intended for local programs such as XarvisCore, not direct exposure to the internet.
 
+## README absorption mode
+
+WARPBLACK can accumulate project context without executing application code. The phrase
+`dame el README` is the materialization trigger: it writes the current structured project
+memory to `README.generated.md`.
+
+The three provenance classes stay separate:
+
+- **confirmed**: explicit user/project facts
+- **derived**: architecture implied by confirmed facts
+- **proposed**: useful ideas that remain unconfirmed
+
+Local incremental capture:
+
+```bash
+warpblack absorb \
+  --workspace /path/to/project \
+  --message "add live audio analysis" \
+  --project MEngine \
+  --fact "Live microphone input" \
+  --fact "FFT analysis" \
+  --derived "Audio buffering is required" \
+  --proposed "Consider AudioWorklet"
+```
+
+Materialize:
+
+```bash
+warpblack absorb --workspace /path/to/project --message "dame el README"
+```
+
+The persistent state lives at `.warpblack/readme_state.json`. Through a running authenticated
+bridge the same flow is available with `warpblack absorb-call` and
+`POST /v1/readme/absorb`.
+
+Absorption is intentionally non-executing: it does not run shell commands, change application
+code, push, merge, or publish. Those remain separate explicit actions.
+
+## Explicit construction mode
+
+The second trigger is `constrúyelo`. Construction does not ask a local agent to invent changes.
+Instead, the planner supplies a unified diff plus validation commands and WARPBLACK acts as the
+bounded local actuator:
+
+```text
+absorbed project state
+        ↓
+AI/planner produces objective + patch + checks
+        ↓
+"constrúyelo"
+        ↓
+git apply --check
+        ↓
+git apply
+        ↓
+validation checks
+        ↓
+git status + diff stat
+        ↓
+structured report
+```
+
+Example:
+
+```bash
+warpblack construct \
+  --workspace /path/to/project \
+  --message "constrúyelo" \
+  --objective "add the health endpoint" \
+  --patch-file /tmp/change.patch \
+  --check-json '["pytest","-q"]'
+```
+
+Through a running local bridge use `warpblack construct-call` or `POST /v1/construct`.
+
+Construction safeguards:
+
+- the explicit `constrúyelo` trigger is mandatory
+- patches against `.git/`, `.warpblack/`, absolute paths, or parent-directory escapes are rejected
+- the patch is checked before application
+- validation stops on the first failure and returns `needs-review`
+- failed validation leaves the working tree intact for inspection; it does not silently revert
+- every task stores a local manifest and SHA-256 hashes under `.warpblack/tasks/<task-id>/`
+- read-back evidence includes `git status --short` and `git diff --stat`
+- no push, merge, or publish is implied by construction
+
 ## Remote control plane via private GitHub repo
 
 The remote mode solves the cloud-to-local boundary without exposing an inbound port. WARPBLACK polls a **private** GitHub repository over outbound HTTPS, accepts only jobs created by an allowlisted GitHub actor, executes them through the same policy engine, comments the structured result, and closes the issue.
@@ -113,6 +199,27 @@ Environment:
 
 ```bash
 export WARPBLACK_GITHUB_TOKEN="your-fine-grained-token"
+```
+
+For the fastest local startup, the repository includes a launcher that reuses GitHub CLI
+authentication when available, creates/updates the virtualenv, installs WARPBLACK, bootstraps the
+control labels, and starts the watcher:
+
+```bash
+bash scripts/start-control.sh OWNER/PRIVATE_CONTROL_REPO /path/to/workspace
+```
+
+If `gh` is already authenticated, the launcher derives both the GitHub token and actor login.
+Otherwise set `WARPBLACK_GITHUB_TOKEN` and `WARPBLACK_ACTOR` first.
+
+Bootstrap the private control repository manually if needed (verifies privacy and creates the required
+`warpblack-job` and `warpblack-approved` labels):
+
+```bash
+warpblack github-bootstrap \
+  --repo OWNER/PRIVATE_CONTROL_REPO \
+  --actor YOUR_GITHUB_LOGIN \
+  --workspace /path/to/workspace
 ```
 
 Process one job:
@@ -145,7 +252,37 @@ A job is an issue carrying the `warpblack-job` label whose body contains only JS
 }
 ```
 
-The JSON cannot self-approve elevated execution. A mutating/code-execution job becomes approved only when the separate `warpblack-approved` label is present.
+The queue accepts three protocol envelopes under the same `warpblack-job` label:
+
+**Absorb context** (no elevated approval required):
+
+```json
+{
+  "protocol": "warpblack-absorb-v1",
+  "message": "dame el README",
+  "project_name": "MEngine",
+  "confirmed": ["Live microphone input"],
+  "derived": ["Audio buffering is required"],
+  "proposed": ["Consider AudioWorklet"]
+}
+```
+
+**Construct a change** (requires the separate `warpblack-approved` label):
+
+```json
+{
+  "protocol": "warpblack-construct-v1",
+  "message": "constrúyelo",
+  "objective": "Add a health endpoint",
+  "patch": "diff --git ...",
+  "checks": [["pytest", "-q"]],
+  "timeout_s": 120
+}
+```
+
+**Execute a command** keeps the existing `warpblack-job-v1` envelope.
+
+The JSON cannot self-approve elevated execution. A construct or mutating/code-execution job becomes approved only when the separate `warpblack-approved` label is present. README absorption stays non-executing and does not need that label.
 
 Remote stdout/stderr are bounded before being posted back. Truncated streams carry SHA-256 hashes so the returned evidence remains correlatable.
 
@@ -171,6 +308,21 @@ WARPBLACK now includes:
 14. policy, executor, bridge, audit, and control-plane tests
 15. threat model and protocol documentation
 16. GitHub Actions workflow for Ruff + Pytest
+
+## v0.3 candidate
+
+The current feature branch adds the conversational-to-repository bridge:
+
+1. incremental README/project-memory absorption
+2. magic materialization trigger: `dame el README`
+3. explicit construction trigger: `constrúyelo`
+4. planner-produced patch application through the existing policy boundary
+5. sequential validation checks plus workspace read-back evidence
+6. authenticated HTTP endpoints for absorb and construct
+7. private GitHub queue envelopes for absorb, construct, and command jobs
+8. separate remote approval label for all construct execution
+9. idempotency-friendly deterministic remote task IDs
+10. control-repository bootstrap for required labels
 
 ## Next
 

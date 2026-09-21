@@ -22,6 +22,70 @@ class WarpClient:
     def capabilities(self) -> dict[str, Any]:
         return self._request("GET", "/v1/capabilities", authenticated=True)
 
+    def plan_intent(
+        self,
+        intent: str,
+        *,
+        target: str = ".",
+        project: str | None = None,
+        constraints: dict[str, object] | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v1/intent/plan",
+            authenticated=True,
+            payload=self._intent_payload(
+                intent,
+                target=target,
+                project=project,
+                constraints=constraints,
+                request_id=request_id,
+            ),
+        )
+
+    def execute_intent(
+        self,
+        intent: str,
+        *,
+        target: str = ".",
+        project: str | None = None,
+        constraints: dict[str, object] | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/v1/intent/execute",
+            authenticated=True,
+            payload=self._intent_payload(
+                intent,
+                target=target,
+                project=project,
+                constraints=constraints,
+                request_id=request_id,
+            ),
+        )
+
+    @staticmethod
+    def _intent_payload(
+        intent: str,
+        *,
+        target: str,
+        project: str | None,
+        constraints: dict[str, object] | None,
+        request_id: str | None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "intent": intent,
+            "target": target,
+            "constraints": constraints or {},
+        }
+        if project is not None:
+            payload["project"] = project
+        if request_id is not None:
+            payload["request_id"] = request_id
+        return payload
+
     def execute(
         self,
         argv: Sequence[str],
@@ -44,6 +108,56 @@ class WarpClient:
         return self._request(
             "POST",
             "/v1/execute",
+            authenticated=True,
+            payload=payload,
+        )
+
+    def absorb_readme(
+        self,
+        *,
+        message: str,
+        project_name: str | None = None,
+        confirmed: Sequence[str] = (),
+        derived: Sequence[str] = (),
+        proposed: Sequence[str] = (),
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "message": message,
+            "confirmed": list(confirmed),
+            "derived": list(derived),
+            "proposed": list(proposed),
+        }
+        if project_name is not None:
+            payload["project_name"] = project_name
+        return self._request(
+            "POST",
+            "/v1/readme/absorb",
+            authenticated=True,
+            payload=payload,
+        )
+
+    def construct(
+        self,
+        *,
+        message: str,
+        objective: str,
+        patch: str,
+        checks: Sequence[Sequence[str]] = (),
+        timeout_s: float = 120.0,
+        task_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "message": message,
+            "objective": objective,
+            "patch": patch,
+            "checks": [list(item) for item in checks],
+            "timeout_s": timeout_s,
+        }
+        if task_id is not None:
+            payload["task_id"] = task_id
+        return self._request(
+            "POST",
+            "/v1/construct",
             authenticated=True,
             payload=payload,
         )

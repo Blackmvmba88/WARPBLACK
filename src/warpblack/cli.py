@@ -8,10 +8,12 @@ import sys
 
 from .audit import AuditLedger
 from .client import WarpClient, WarpClientError
+from .construct import PatchConstructor
 from .executor import TerminalExecutor
 from .github_queue import GitHubControlPlane, GitHubQueueError, token_from_env
 from .models import CommandRequest
 from .policy import PolicyError
+from .readme_absorb import ReadmeAbsorber
 from .server import BridgeConfig, serve
 
 
@@ -63,11 +65,66 @@ def build_parser() -> argparse.ArgumentParser:
     call.add_argument("--approve", action="store_true")
     call.add_argument("argv", nargs=argparse.REMAINDER, help="Command after --")
 
+    absorb = sub.add_parser("absorb", help="Incrementally absorb project context into README state")
+    absorb.add_argument("--workspace", default=".", help="Project workspace root")
+    absorb.add_argument("--message", required=True, help="Incoming interaction or trigger phrase")
+    absorb.add_argument("--project", help="Project name stored in README state")
+    absorb.add_argument("--fact", action="append", default=[], help="Confirmed fact; repeatable")
+    absorb.add_argument("--derived", action="append", default=[], help="Derived item; repeatable")
+    absorb.add_argument("--proposed", action="append", default=[], help="Proposed item; repeatable")
+
+    absorb_call = sub.add_parser(
+        "absorb-call",
+        help="Send incremental README context through a running bridge",
+    )
+    absorb_call.add_argument("--url", default=DEFAULT_URL)
+    absorb_call.add_argument("--message", required=True, help="Incoming interaction or trigger phrase")
+    absorb_call.add_argument("--project", help="Project name stored in README state")
+    absorb_call.add_argument("--fact", action="append", default=[], help="Confirmed fact; repeatable")
+    absorb_call.add_argument("--derived", action="append", default=[], help="Derived item; repeatable")
+    absorb_call.add_argument("--proposed", action="append", default=[], help="Proposed item; repeatable")
+
+    construct = sub.add_parser(
+        "construct",
+        help="Apply an explicit AI-produced patch using absorbed project context",
+    )
+    construct.add_argument("--workspace", default=".", help="Project workspace root")
+    construct.add_argument("--message", required=True, help="Must contain the explicit construct trigger")
+    construct.add_argument("--objective", required=True, help="Human-readable task objective")
+    construct.add_argument("--patch-file", required=True, help="Unified diff file to apply")
+    construct.add_argument(
+        "--check-json",
+        action="append",
+        default=[],
+        help='Validation argv as JSON, e.g. ["pytest","-q"]; repeatable',
+    )
+    construct.add_argument("--timeout", type=float, default=120.0)
+    construct.add_argument("--task-id")
+    _add_audit_arg(construct)
+
+    construct_call = sub.add_parser(
+        "construct-call",
+        help="Send an explicit patch construction task through a running bridge",
+    )
+    construct_call.add_argument("--url", default=DEFAULT_URL)
+    construct_call.add_argument("--message", required=True)
+    construct_call.add_argument("--objective", required=True)
+    construct_call.add_argument("--patch-file", required=True)
+    construct_call.add_argument("--check-json", action="append", default=[])
+    construct_call.add_argument("--timeout", type=float, default=120.0)
+    construct_call.add_argument("--task-id")
+
     health = sub.add_parser("health", help="Check bridge liveness")
     health.add_argument("--url", default=DEFAULT_URL)
 
     capabilities = sub.add_parser("capabilities", help="Read authenticated bridge capabilities")
     capabilities.add_argument("--url", default=DEFAULT_URL)
+
+    github_bootstrap = sub.add_parser(
+        "github-bootstrap",
+        help="Verify private control repo and create required labels",
+    )
+    _add_github_control_args(github_bootstrap)
 
     github_once = sub.add_parser("github-once", help="Process at most one private GitHub job")
     _add_github_control_args(github_once)
@@ -95,6 +152,18 @@ def _token(required: bool = True) -> str:
 
 def _audit_path(raw: str) -> Path:
     return Path(raw).expanduser()
+
+
+def _parse_checks(raw_values: list[str]) -> list[list[str]]:
+    checks: list[list[str]] = []
+    for raw in raw_values:
+        value = json.loads(raw)
+        if not isinstance(value, list) or not value or not all(
+            isinstance(item, str) and item.strip() for item in value
+        ):
+            raise ValueError("--check-json must be a non-empty JSON array of strings")
+        checks.append(value)
+    return checks
 
 
 def _github_control(args: argparse.Namespace) -> GitHubControlPlane:
@@ -142,6 +211,83 @@ def main(argv: list[str] | None = None) -> int:
         payload["ok"] = result.exit_code == 0 and not result.timed_out
         print(json.dumps(payload, ensure_ascii=False))
         return 0 if payload["ok"] else 1
+
+    if args.command == "absorb":
+        try:
+            absorber = ReadmeAbsorber(Path(args.workspace).resolve())
+            payload = absorber.ingest(
+                message=args.message,
+                project_name=args.project,
+                confirmed=args.fact,
+                derived=args.derived,
+                proposed=args.proposed,
+            ).to_dict()
+        except (TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 3
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+
+    if args.command == "absorb-call":
+        try:
+            client = WarpClient(args.url, _token())
+            payload = client.absorb_readme(
+                message=args.message,
+                project_name=args.project,
+                confirmed=args.fact,
+                derived=args.derived,
+                proposed=args.proposed,
+            )
+        except (ValueError, WarpClientError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 3
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0 if payload.get("ok") else 1
+
+    if args.command in {"construct", "construct-call"}:
+        try:
+            patch = Path(args.patch_file).read_text(encoding="utf-8")
+            checks = _parse_checks(args.check_json)
+            if args.command == "construct":
+                workspace = Path(args.workspace).resolve()
+                constructor = PatchConstructor(
+                    workspace,
+                    executor=TerminalExecutor(
+                        workspace,
+                        audit_ledger=AuditLedger(_audit_path(args.audit_log)),
+                        source="construct-cli",
+                    ),
+                )
+                payload = constructor.construct(
+                    message=args.message,
+                    objective=args.objective,
+                    patch=patch,
+                    checks=checks,
+                    timeout_s=args.timeout,
+                    task_id=args.task_id,
+                    approved=True,
+                ).to_dict()
+            else:
+                client = WarpClient(args.url, _token())
+                payload = client.construct(
+                    message=args.message,
+                    objective=args.objective,
+                    patch=patch,
+                    checks=checks,
+                    timeout_s=args.timeout,
+                    task_id=args.task_id,
+                )
+        except (
+            OSError,
+            ValueError,
+            json.JSONDecodeError,
+            WarpClientError,
+            PolicyError,
+        ) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 3
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0 if payload.get("ok") else 1
 
     if args.command == "serve":
         try:
@@ -195,9 +341,12 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(payload, ensure_ascii=False))
         return 0 if payload.get("ok") else 1
 
-    if args.command in {"github-once", "github-watch"}:
+    if args.command in {"github-bootstrap", "github-once", "github-watch"}:
         try:
             control = _github_control(args)
+            if args.command == "github-bootstrap":
+                print(json.dumps(control.bootstrap(), ensure_ascii=False))
+                return 0
             control.assert_private_repository()
             if args.command == "github-once":
                 processed = control.run_once()
