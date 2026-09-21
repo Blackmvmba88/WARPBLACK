@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTROL_REPO="${1:-${WARPBLACK_CONTROL_REPO:-}}"
-WORKSPACE="${2:-${WARPBLACK_WORKSPACE:-$PWD}}"
+WORKSPACE="${2:-${WARPBLACK_WORKSPACE:-}}"
 ACTOR="${WARPBLACK_ACTOR:-}"
 POLL="${WARPBLACK_POLL:-5}"
 VENV="${WARPBLACK_VENV:-$ROOT/.venv}"
@@ -11,6 +11,12 @@ VENV="${WARPBLACK_VENV:-$ROOT/.venv}"
 if [[ -z "$CONTROL_REPO" ]]; then
   echo "usage: $0 OWNER/PRIVATE_CONTROL_REPO [WORKSPACE]" >&2
   echo "or set WARPBLACK_CONTROL_REPO" >&2
+  exit 2
+fi
+
+if [[ -z "$WORKSPACE" ]]; then
+  echo "usage: $0 OWNER/PRIVATE_CONTROL_REPO WORKSPACE" >&2
+  echo "or set WARPBLACK_CONTROL_REPO and WARPBLACK_WORKSPACE" >&2
   exit 2
 fi
 
