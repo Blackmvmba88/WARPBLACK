@@ -201,7 +201,18 @@ Environment:
 export WARPBLACK_GITHUB_TOKEN="your-fine-grained-token"
 ```
 
-Bootstrap the private control repository once (verifies privacy and creates the required
+For the fastest local startup, the repository includes a launcher that reuses GitHub CLI
+authentication when available, creates/updates the virtualenv, installs WARPBLACK, bootstraps the
+control labels, and starts the watcher:
+
+```bash
+bash scripts/start-control.sh OWNER/PRIVATE_CONTROL_REPO /path/to/workspace
+```
+
+If `gh` is already authenticated, the launcher derives both the GitHub token and actor login.
+Otherwise set `WARPBLACK_GITHUB_TOKEN` and `WARPBLACK_ACTOR` first.
+
+Bootstrap the private control repository manually if needed (verifies privacy and creates the required
 `warpblack-job` and `warpblack-approved` labels):
 
 ```bash
