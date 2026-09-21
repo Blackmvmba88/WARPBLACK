@@ -6,18 +6,20 @@ import json
 import os
 from pathlib import Path
 import time
-from typing import Any
+from typing import Any, TypeAlias
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 from .audit import AuditLedger
+from .construct import PatchConstructor
 from .executor import TerminalExecutor
 from .models import CommandRequest
 from .policy import PolicyError
 
 
 JOB_PROTOCOL = "warpblack-job-v1"
+CONSTRUCT_PROTOCOL = "warpblack-construct-v1"
 JOB_LABEL = "warpblack-job"
 APPROVAL_LABEL = "warpblack-approved"
 MAX_REMOTE_STREAM_CHARS = 12_000
@@ -28,13 +30,29 @@ class GitHubQueueError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class GitHubJob:
+class GitHubCommandJob:
     issue_number: int
     argv: tuple[str, ...]
     cwd: str
     timeout_s: float
     approved: bool
     actor: str
+
+
+@dataclass(frozen=True)
+class GitHubConstructJob:
+    issue_number: int
+    message: str
+    objective: str
+    patch: str
+    checks: tuple[tuple[str, ...], ...]
+    timeout_s: float
+    task_id: str | None
+    approved: bool
+    actor: str
+
+
+GitHubJob: TypeAlias = GitHubCommandJob | GitHubConstructJob
 
 
 class GitHubControlPlane:
@@ -67,6 +85,10 @@ class GitHubControlPlane:
             audit_ledger=ledger,
             source=f"github:{repository}",
             actor=allowed_actor,
+        )
+        self.constructor = PatchConstructor(
+            self.workspace_root,
+            executor=self.executor,
         )
 
     def assert_private_repository(self) -> None:
@@ -111,30 +133,49 @@ class GitHubControlPlane:
             time.sleep(poll_interval_s)
 
     def _execute_job(self, job: GitHubJob) -> None:
-        cwd = Path(job.cwd)
-        if not cwd.is_absolute():
-            cwd = self.workspace_root / cwd
-        request = CommandRequest.from_parts(
-            job.argv,
-            cwd,
-            timeout_s=job.timeout_s,
-            approved=job.approved,
-            request_id=f"github:{self.repository}#{job.issue_number}",
-        )
-
+        request_id = f"github:{self.repository}#{job.issue_number}"
         try:
-            result = self.executor.execute(request)
-            payload: dict[str, Any] = result.to_dict()
-            payload["ok"] = result.exit_code == 0 and not result.timed_out
-            self._bound_stream(payload, "stdout")
-            self._bound_stream(payload, "stderr")
-        except (PolicyError, FileNotFoundError, PermissionError, OSError) as exc:
+            if isinstance(job, GitHubConstructJob):
+                if not job.approved:
+                    raise PolicyError(
+                        f"remote construct requires the separate {APPROVAL_LABEL!r} label"
+                    )
+                result = self.constructor.construct(
+                    message=job.message,
+                    objective=job.objective,
+                    patch=job.patch,
+                    checks=job.checks,
+                    timeout_s=job.timeout_s,
+                    task_id=job.task_id or f"github-{job.issue_number}",
+                    approved=True,
+                )
+                payload: dict[str, Any] = result.to_dict()
+                payload["request_id"] = request_id
+                payload["job_type"] = "construct"
+                self._bound_construct_streams(payload)
+            else:
+                cwd = Path(job.cwd)
+                if not cwd.is_absolute():
+                    cwd = self.workspace_root / cwd
+                request = CommandRequest.from_parts(
+                    job.argv,
+                    cwd,
+                    timeout_s=job.timeout_s,
+                    approved=job.approved,
+                    request_id=request_id,
+                )
+                result = self.executor.execute(request)
+                payload = result.to_dict()
+                payload["ok"] = result.exit_code == 0 and not result.timed_out
+                payload["job_type"] = "command"
+                self._bound_stream(payload, "stdout")
+                self._bound_stream(payload, "stderr")
+        except (PolicyError, FileNotFoundError, FileExistsError, PermissionError, OSError, ValueError) as exc:
             payload = {
                 "ok": False,
-                "request_id": request.request_id,
+                "request_id": request_id,
+                "job_type": "construct" if isinstance(job, GitHubConstructJob) else "command",
                 "error": str(exc),
-                "argv": list(job.argv),
-                "cwd": job.cwd,
             }
 
         body = "WARPBLACK_RESULT_V1\n```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
@@ -148,6 +189,20 @@ class GitHubControlPlane:
             f"/repos/{self.repository}/issues/{job.issue_number}",
             {"state": "closed"},
         )
+
+    @classmethod
+    def _bound_construct_streams(cls, payload: dict[str, Any]) -> None:
+        for key in ("apply_check", "apply_result", "workspace_status", "diff_stat"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                cls._bound_stream(value, "stdout")
+                cls._bound_stream(value, "stderr")
+        checks = payload.get("checks")
+        if isinstance(checks, list):
+            for value in checks:
+                if isinstance(value, dict):
+                    cls._bound_stream(value, "stdout")
+                    cls._bound_stream(value, "stderr")
 
     @staticmethod
     def _bound_stream(payload: dict[str, Any], key: str) -> None:
@@ -218,31 +273,72 @@ def parse_issue_job(issue: object, *, allowed_actor: str) -> GitHubJob | None:
         payload = json.loads(body)
     except json.JSONDecodeError as exc:
         raise GitHubQueueError("job issue body must contain only JSON") from exc
-    if not isinstance(payload, dict) or payload.get("protocol") != JOB_PROTOCOL:
-        raise GitHubQueueError("unsupported job protocol")
-
-    argv = payload.get("argv")
-    if not isinstance(argv, list) or not argv or not all(isinstance(x, str) for x in argv):
-        raise GitHubQueueError("argv must be a non-empty list of strings")
-    cwd = payload.get("cwd", ".")
-    if not isinstance(cwd, str):
-        raise GitHubQueueError("cwd must be a string")
-    timeout_s = payload.get("timeout_s", 60.0)
-    if not isinstance(timeout_s, (int, float)):
-        raise GitHubQueueError("timeout_s must be numeric")
+    if not isinstance(payload, dict):
+        raise GitHubQueueError("job payload must be a JSON object")
 
     issue_number = issue.get("number")
     if not isinstance(issue_number, int):
         raise GitHubQueueError("issue number missing")
 
-    return GitHubJob(
-        issue_number=issue_number,
-        argv=tuple(argv),
-        cwd=cwd,
-        timeout_s=float(timeout_s),
-        approved=APPROVAL_LABEL in labels,
-        actor=allowed_actor,
-    )
+    protocol = payload.get("protocol")
+    approved = APPROVAL_LABEL in labels
+    timeout_s = payload.get("timeout_s", 60.0)
+    if not isinstance(timeout_s, (int, float)):
+        raise GitHubQueueError("timeout_s must be numeric")
+
+    if protocol == JOB_PROTOCOL:
+        argv = payload.get("argv")
+        if not isinstance(argv, list) or not argv or not all(isinstance(x, str) for x in argv):
+            raise GitHubQueueError("argv must be a non-empty list of strings")
+        cwd = payload.get("cwd", ".")
+        if not isinstance(cwd, str):
+            raise GitHubQueueError("cwd must be a string")
+        return GitHubCommandJob(
+            issue_number=issue_number,
+            argv=tuple(argv),
+            cwd=cwd,
+            timeout_s=float(timeout_s),
+            approved=approved,
+            actor=allowed_actor,
+        )
+
+    if protocol == CONSTRUCT_PROTOCOL:
+        message = payload.get("message")
+        objective = payload.get("objective")
+        patch = payload.get("patch")
+        if not isinstance(message, str):
+            raise GitHubQueueError("construct message must be a string")
+        if not isinstance(objective, str):
+            raise GitHubQueueError("construct objective must be a string")
+        if not isinstance(patch, str):
+            raise GitHubQueueError("construct patch must be a string")
+
+        raw_checks = payload.get("checks", [])
+        if not isinstance(raw_checks, list):
+            raise GitHubQueueError("construct checks must be a list")
+        checks: list[tuple[str, ...]] = []
+        for item in raw_checks:
+            if not isinstance(item, list) or not item or not all(isinstance(arg, str) for arg in item):
+                raise GitHubQueueError("each construct check must be a non-empty argv list")
+            checks.append(tuple(item))
+
+        task_id = payload.get("task_id")
+        if task_id is not None and not isinstance(task_id, str):
+            raise GitHubQueueError("construct task_id must be a string")
+
+        return GitHubConstructJob(
+            issue_number=issue_number,
+            message=message,
+            objective=objective,
+            patch=patch,
+            checks=tuple(checks),
+            timeout_s=float(timeout_s),
+            task_id=task_id,
+            approved=approved,
+            actor=allowed_actor,
+        )
+
+    raise GitHubQueueError("unsupported job protocol")
 
 
 def token_from_env() -> str:
