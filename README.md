@@ -105,6 +105,44 @@ warpblack call -- git status
 
 The HTTP bridge binds only to loopback (`127.0.0.1`, `localhost`, or `::1`). It is intended for local programs such as XarvisCore, not direct exposure to the internet.
 
+## README absorption mode
+
+WARPBLACK can accumulate project context without executing application code. The phrase
+`dame el README` is the materialization trigger: it writes the current structured project
+memory to `README.generated.md`.
+
+The three provenance classes stay separate:
+
+- **confirmed**: explicit user/project facts
+- **derived**: architecture implied by confirmed facts
+- **proposed**: useful ideas that remain unconfirmed
+
+Local incremental capture:
+
+```bash
+warpblack absorb \
+  --workspace /path/to/project \
+  --message "add live audio analysis" \
+  --project MEngine \
+  --fact "Live microphone input" \
+  --fact "FFT analysis" \
+  --derived "Audio buffering is required" \
+  --proposed "Consider AudioWorklet"
+```
+
+Materialize:
+
+```bash
+warpblack absorb --workspace /path/to/project --message "dame el README"
+```
+
+The persistent state lives at `.warpblack/readme_state.json`. Through a running authenticated
+bridge the same flow is available with `warpblack absorb-call` and
+`POST /v1/readme/absorb`.
+
+Absorption is intentionally non-executing: it does not run shell commands, change application
+code, push, merge, or publish. Those remain separate explicit actions.
+
 ## Remote control plane via private GitHub repo
 
 The remote mode solves the cloud-to-local boundary without exposing an inbound port. WARPBLACK polls a **private** GitHub repository over outbound HTTPS, accepts only jobs created by an allowlisted GitHub actor, executes them through the same policy engine, comments the structured result, and closes the issue.
