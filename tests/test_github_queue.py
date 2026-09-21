@@ -4,10 +4,12 @@ import subprocess
 import pytest
 
 from warpblack.github_queue import (
+    ABSORB_PROTOCOL,
     APPROVAL_LABEL,
     CONSTRUCT_PROTOCOL,
     JOB_LABEL,
     JOB_PROTOCOL,
+    GitHubAbsorbJob,
     GitHubConstructJob,
     GitHubControlPlane,
     GitHubQueueError,
@@ -199,3 +201,58 @@ def test_unapproved_construct_job_is_denied_without_applying(tmp_path: Path) -> 
     assert not (tmp_path / "remote.txt").exists()
     comment = next(call for call in control.calls if call[0] == "POST")
     assert "warpblack-approved" in comment[2]["body"]
+
+
+def test_absorb_job_materializes_readme_without_approval(tmp_path: Path) -> None:
+    class FakeControlPlane(GitHubControlPlane):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.calls = []
+
+        def _request_json(self, method, path, payload=None):
+            self.calls.append((method, path, payload))
+            return {}
+
+    control = FakeControlPlane(
+        token="token",
+        repository="owner/private-control",
+        allowed_actor="Blackmvmba88",
+        workspace_root=tmp_path,
+    )
+    first = parse_issue_job(
+        make_issue(
+            payload={
+                "protocol": ABSORB_PROTOCOL,
+                "message": "capture architecture",
+                "project_name": "Remote Demo",
+                "confirmed": ["Explicit user orders trigger actions"],
+                "derived": ["Project state must persist"],
+                "proposed": ["Add richer planner later"],
+            },
+        ),
+        allowed_actor="Blackmvmba88",
+    )
+    assert isinstance(first, GitHubAbsorbJob)
+    control._execute_job(first)
+    assert not (tmp_path / "README.generated.md").exists()
+
+    trigger = parse_issue_job(
+        make_issue(
+            payload={
+                "protocol": ABSORB_PROTOCOL,
+                "message": "bro, dame el README",
+            },
+        ),
+        allowed_actor="Blackmvmba88",
+    )
+    assert isinstance(trigger, GitHubAbsorbJob)
+    control._execute_job(trigger)
+
+    readme = (tmp_path / "README.generated.md").read_text(encoding="utf-8")
+    assert "# Remote Demo" in readme
+    assert "Explicit user orders trigger actions" in readme
+    assert "Project state must persist" in readme
+    assert "Add richer planner later" in readme
+    comments = [call for call in control.calls if call[0] == "POST"]
+    assert '"job_type": "absorb"' in comments[-1][2]["body"]
+    assert '"triggered": true' in comments[-1][2]["body"]
