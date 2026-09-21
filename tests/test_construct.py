@@ -38,6 +38,7 @@ def test_construct_applies_patch_runs_checks_and_returns_diff(tmp_path: Path) ->
         patch=_hello_patch(),
         checks=[["cat", "hello.txt"]],
         task_id="task-001",
+        approved=True,
     )
 
     assert result.status == "done"
@@ -78,6 +79,7 @@ new file mode 100644
             message="constrúyelo",
             objective="tamper with control state",
             patch=patch,
+            approved=True,
         )
 
 
@@ -91,8 +93,23 @@ def test_failed_check_keeps_patch_for_review(tmp_path: Path) -> None:
         patch=_hello_patch(),
         checks=[["cat", "missing.txt"]],
         task_id="task-review",
+        approved=True,
     )
 
     assert result.status == "needs-review"
     assert result.to_dict()["ok"] is False
     assert (tmp_path / "hello.txt").exists()
+
+
+def test_construct_rejects_missing_approval(tmp_path: Path) -> None:
+    _git_init(tmp_path)
+    constructor = PatchConstructor(tmp_path)
+
+    with pytest.raises(Exception, match="explicit approval"):
+        constructor.construct(
+            message="constrúyelo",
+            objective="create marker",
+            patch=_hello_patch(),
+        )
+
+    assert not (tmp_path / "hello.txt").exists()
