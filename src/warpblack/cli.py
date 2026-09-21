@@ -100,6 +100,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     construct.add_argument("--timeout", type=float, default=120.0)
     construct.add_argument("--task-id")
+    _add_audit_arg(construct)
 
     construct_call = sub.add_parser(
         "construct-call",
@@ -253,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
                     workspace,
                     executor=TerminalExecutor(
                         workspace,
-                        audit_ledger=AuditLedger(_audit_path(DEFAULT_AUDIT_LOG)),
+                        audit_ledger=AuditLedger(_audit_path(args.audit_log)),
                         source="construct-cli",
                     ),
                 )
