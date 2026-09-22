@@ -295,6 +295,8 @@ def _discover_projects(root: Path, *, max_depth: int) -> list[Path]:
             dirs[:] = []
             continue
 
+        has_project_marker = any((path / marker).exists() for marker in PROJECT_MARKERS)
+
         dirs[:] = [
             name
             for name in dirs
@@ -302,13 +304,7 @@ def _discover_projects(root: Path, *, max_depth: int) -> list[Path]:
             and not name.startswith(".")
         ]
 
-        markers = set(files) | set(dirs)
-        if path == root and any((path / marker).exists() for marker in PROJECT_MARKERS):
-            found.append(path)
-            dirs[:] = []
-            continue
-
-        if any(marker in markers for marker in PROJECT_MARKERS):
+        if has_project_marker:
             found.append(path)
             dirs[:] = []
 
