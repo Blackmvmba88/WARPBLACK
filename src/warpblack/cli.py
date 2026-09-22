@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ from .executor import TerminalExecutor
 from .github_queue import GitHubControlPlane, GitHubQueueError, token_from_env
 from .models import CommandRequest
 from .policy import PolicyError
+from .project_registry import DEFAULT_PROJECTS_FILE, ProjectRegistry, ProjectRegistryError
 from .readme_absorb import ReadmeAbsorber
 from .server import BridgeConfig, serve
 
@@ -133,6 +135,41 @@ def build_parser() -> argparse.ArgumentParser:
     _add_github_control_args(github_watch)
     github_watch.add_argument("--poll", type=float, default=5.0, help="Polling interval in seconds")
 
+    projects = sub.add_parser(
+        "projects",
+        help="Register project folders and maintain a logical order independent of disk layout",
+    )
+    projects.add_argument(
+        "--registry",
+        default=DEFAULT_PROJECTS_FILE,
+        help="Persistent project registry JSON file",
+    )
+    project_sub = projects.add_subparsers(dest="projects_command", required=True)
+
+    project_add = project_sub.add_parser("add", help="Register one project folder")
+    project_add.add_argument("path")
+    project_add.add_argument("--name")
+    project_add.add_argument("--group")
+    project_add.add_argument("--status", default="active")
+    project_add.add_argument("--position", type=int, help="1-based logical position")
+
+    project_scan = project_sub.add_parser("scan", help="Discover project folders below a root")
+    project_scan.add_argument("root")
+    project_scan.add_argument("--depth", type=int, default=2)
+    project_scan.add_argument("--group")
+
+    project_sub.add_parser("list", help="List projects in canonical logical order")
+
+    project_move = project_sub.add_parser("move", help="Move a project in logical order")
+    project_move.add_argument("project", help="Project id, unique name, or registered path")
+    project_move.add_argument("position", type=int, help="1-based target position")
+
+    project_remove = project_sub.add_parser("remove", help="Remove a project from the registry")
+    project_remove.add_argument("project", help="Project id, unique name, or registered path")
+
+    project_refresh = project_sub.add_parser("refresh", help="Refresh project metadata and missing state")
+    project_refresh.add_argument("project", nargs="?", help="Optional project id/name/path")
+
     return parser
 
 
@@ -166,6 +203,12 @@ def _parse_checks(raw_values: list[str]) -> list[list[str]]:
     return checks
 
 
+def _project_payload(entry) -> dict[str, object]:
+    payload = asdict(entry)
+    payload["position"] = entry.order + 1
+    return payload
+
+
 def _github_control(args: argparse.Namespace) -> GitHubControlPlane:
     return GitHubControlPlane(
         token=token_from_env(),
@@ -178,6 +221,58 @@ def _github_control(args: argparse.Namespace) -> GitHubControlPlane:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command == "projects":
+        try:
+            registry = ProjectRegistry(args.registry)
+            if args.projects_command == "add":
+                if args.position is not None and args.position < 1:
+                    raise ProjectRegistryError("position must be >= 1")
+                entry = registry.add(
+                    args.path,
+                    name=args.name,
+                    group=args.group,
+                    status=args.status,
+                    position=args.position - 1 if args.position is not None else None,
+                )
+                payload = {"ok": True, "project": _project_payload(entry)}
+            elif args.projects_command == "scan":
+                added = registry.scan(args.root, max_depth=args.depth, group=args.group)
+                payload = {
+                    "ok": True,
+                    "added": [_project_payload(item) for item in added],
+                    "projects": [_project_payload(item) for item in registry.entries],
+                }
+            elif args.projects_command == "list":
+                payload = {
+                    "ok": True,
+                    "registry": str(registry.state_file),
+                    "projects": [_project_payload(item) for item in registry.entries],
+                }
+            elif args.projects_command == "move":
+                if args.position < 1:
+                    raise ProjectRegistryError("position must be >= 1")
+                entry = registry.move(args.project, args.position - 1)
+                payload = {
+                    "ok": True,
+                    "project": _project_payload(entry),
+                    "projects": [_project_payload(item) for item in registry.entries],
+                }
+            elif args.projects_command == "remove":
+                entry = registry.remove(args.project)
+                payload = {"ok": True, "removed": _project_payload(entry)}
+            else:
+                refreshed = registry.refresh(args.project)
+                payload = {
+                    "ok": True,
+                    "refreshed": [_project_payload(item) for item in refreshed],
+                }
+        except (ProjectRegistryError, OSError, ValueError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 3
+
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
 
     if args.command == "exec":
         command = _command_argv(args.argv)
