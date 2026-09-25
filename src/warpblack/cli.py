@@ -11,6 +11,15 @@ from .audit import AuditLedger
 from .client import WarpClient, WarpClientError
 from .construct import PatchConstructor
 from .doctor import run_doctor
+from .desktop import (
+    DesktopError,
+    activate_application,
+    capture_screen,
+    click_at,
+    frontmost_application,
+    keystroke,
+    list_windows,
+)
 from .executor import TerminalExecutor
 from .github_queue import GitHubControlPlane, GitHubQueueError, token_from_env
 from .models import CommandRequest
@@ -128,6 +137,24 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--repo", help="Optional private control repo as owner/name")
     doctor.add_argument("--actor", help="Optional allowlisted GitHub actor")
 
+    desktop = sub.add_parser("desktop", help="Observe or control the local macOS desktop")
+    desktop_sub = desktop.add_subparsers(dest="desktop_command", required=True)
+    desktop_sub.add_parser("frontmost", help="Read the frontmost application")
+    desktop_sub.add_parser("windows", help="List visible application windows")
+    desktop_capture = desktop_sub.add_parser("capture", help="Capture the current screen")
+    desktop_capture.add_argument("--output", help="Optional PNG output path")
+    desktop_activate = desktop_sub.add_parser("activate", help="Bring an application to the front")
+    desktop_activate.add_argument("application")
+    desktop_activate.add_argument("--approve", action="store_true")
+    desktop_keys = desktop_sub.add_parser("keystroke", help="Send a keyboard chord")
+    desktop_keys.add_argument("keys")
+    desktop_keys.add_argument("--modifier", action="append", default=[])
+    desktop_keys.add_argument("--approve", action="store_true")
+    desktop_click = desktop_sub.add_parser("click", help="Click a screen coordinate")
+    desktop_click.add_argument("x", type=int)
+    desktop_click.add_argument("y", type=int)
+    desktop_click.add_argument("--approve", action="store_true")
+
     github_bootstrap = sub.add_parser(
         "github-bootstrap",
         help="Verify private control repo and create required labels",
@@ -227,6 +254,30 @@ def _github_control(args: argparse.Namespace) -> GitHubControlPlane:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command == "desktop":
+        try:
+            if args.desktop_command == "frontmost":
+                payload = frontmost_application().to_dict()
+            elif args.desktop_command == "windows":
+                payload = list_windows().to_dict()
+            elif args.desktop_command == "capture":
+                payload = capture_screen(args.output).to_dict()
+            elif args.desktop_command == "activate":
+                payload = activate_application(args.application, approved=args.approve).to_dict()
+            elif args.desktop_command == "keystroke":
+                payload = keystroke(
+                    args.keys,
+                    modifiers=args.modifier,
+                    approved=args.approve,
+                ).to_dict()
+            else:
+                payload = click_at(args.x, args.y, approved=args.approve).to_dict()
+        except DesktopError as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 3
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload.get("ok") else 1
 
     if args.command == "doctor":
         payload = run_doctor(
