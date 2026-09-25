@@ -94,6 +94,40 @@ The watcher remains intentionally foreground-first: closing the terminal stops r
 That makes the first-use behavior visible and easy to audit before installing it as a background
 service.
 
+## BM-DESKTOP-001 — macOS Desktop Observer
+
+WARPBLACK can now observe and control the local macOS desktop through a narrow command surface.
+
+Read-only observation:
+
+```bash
+warpblack desktop frontmost
+warpblack desktop windows
+warpblack desktop capture --output /tmp/warpblack-screen.png
+```
+
+State-changing UI actions require explicit approval:
+
+```bash
+warpblack desktop activate Blender --approve
+warpblack desktop keystroke s --modifier command --approve
+warpblack desktop click 640 420 --approve
+```
+
+macOS must grant the terminal/Python process the relevant system permissions:
+
+- **Accessibility** for window inspection, activation, clicks, and keystrokes
+- **Screen Recording** for screenshots
+
+The desktop layer intentionally exposes named actions rather than arbitrary AppleScript. The target
+control loop is:
+
+```text
+OBSERVE → PLAN → ACT → CAPTURE → VERIFY
+```
+
+This milestone is the base for application-specific adapters such as Blender and Arduino IDE.
+
 ## Project workspace registry
 
 WARPBLACK can act as a project workbench instead of assuming one fixed workspace. Project folders
