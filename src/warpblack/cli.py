@@ -17,6 +17,7 @@ from .desktop import (
     capture_screen,
     click_at,
     frontmost_application,
+    focused_window,
     keystroke,
     list_windows,
 )
@@ -140,9 +141,12 @@ def build_parser() -> argparse.ArgumentParser:
     desktop = sub.add_parser("desktop", help="Observe or control the local macOS desktop")
     desktop_sub = desktop.add_subparsers(dest="desktop_command", required=True)
     desktop_sub.add_parser("frontmost", help="Read the frontmost application")
+    desktop_sub.add_parser("focused-window", help="Read PID and title of the focused window")
     desktop_sub.add_parser("windows", help="List visible application windows")
     desktop_capture = desktop_sub.add_parser("capture", help="Capture the current screen")
     desktop_capture.add_argument("--output", help="Optional PNG output path")
+    desktop_capture.add_argument("--expect-pid", type=int)
+    desktop_capture.add_argument("--expect-title")
     desktop_activate = desktop_sub.add_parser("activate", help="Bring an application to the front")
     desktop_activate.add_argument("application")
     desktop_activate.add_argument("--approve", action="store_true")
@@ -150,10 +154,14 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_keys.add_argument("keys")
     desktop_keys.add_argument("--modifier", action="append", default=[])
     desktop_keys.add_argument("--approve", action="store_true")
+    desktop_keys.add_argument("--expect-pid", type=int)
+    desktop_keys.add_argument("--expect-title")
     desktop_click = desktop_sub.add_parser("click", help="Click a screen coordinate")
     desktop_click.add_argument("x", type=int)
     desktop_click.add_argument("y", type=int)
     desktop_click.add_argument("--approve", action="store_true")
+    desktop_click.add_argument("--expect-pid", type=int)
+    desktop_click.add_argument("--expect-title")
 
     github_bootstrap = sub.add_parser(
         "github-bootstrap",
@@ -259,10 +267,16 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if args.desktop_command == "frontmost":
                 payload = frontmost_application().to_dict()
+            elif args.desktop_command == "focused-window":
+                payload = focused_window().to_dict()
             elif args.desktop_command == "windows":
                 payload = list_windows().to_dict()
             elif args.desktop_command == "capture":
-                payload = capture_screen(args.output).to_dict()
+                payload = capture_screen(
+                    args.output,
+                    expected_pid=args.expect_pid,
+                    expected_title=args.expect_title,
+                ).to_dict()
             elif args.desktop_command == "activate":
                 payload = activate_application(args.application, approved=args.approve).to_dict()
             elif args.desktop_command == "keystroke":
@@ -270,9 +284,17 @@ def main(argv: list[str] | None = None) -> int:
                     args.keys,
                     modifiers=args.modifier,
                     approved=args.approve,
+                    expected_pid=args.expect_pid,
+                    expected_title=args.expect_title,
                 ).to_dict()
             else:
-                payload = click_at(args.x, args.y, approved=args.approve).to_dict()
+                payload = click_at(
+                    args.x,
+                    args.y,
+                    approved=args.approve,
+                    expected_pid=args.expect_pid,
+                    expected_title=args.expect_title,
+                ).to_dict()
         except DesktopError as exc:
             print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
             return 3
