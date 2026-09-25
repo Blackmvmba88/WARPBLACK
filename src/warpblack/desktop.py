@@ -25,7 +25,7 @@ class DesktopResult:
 
 def _require_macos() -> None:
     if platform.system() != "Darwin":
-        raise DesktopError("BM-DESKTOP-001 currently supports macOS only")
+        raise DesktopError("BM-DESKTOP currently supports macOS only")
 
 
 def _run_osascript(lines: Sequence[str], *, timeout_s: float = 10.0) -> str:
@@ -50,14 +50,50 @@ def _run_osascript(lines: Sequence[str], *, timeout_s: float = 10.0) -> str:
     return completed.stdout.strip()
 
 
+def _parse_window_row(raw: str) -> dict[str, object]:
+    parts = raw.split("\t", 3)
+    if len(parts) != 4:
+        raise DesktopError("invalid window identity returned by System Events")
+    application, pid_raw, frontmost_raw, title = parts
+    try:
+        pid = int(pid_raw)
+    except ValueError as exc:
+        raise DesktopError("invalid process id returned by System Events") from exc
+    return {
+        "application": application,
+        "pid": pid,
+        "frontmost": frontmost_raw.strip().lower() == "true",
+        "title": title,
+    }
+
+
 def frontmost_application() -> DesktopResult:
+    identity = focused_window().data
+    return DesktopResult(
+        True,
+        "frontmost",
+        {
+            "application": identity["application"],
+            "pid": identity["pid"],
+            "title": identity["title"],
+        },
+    )
+
+
+def focused_window() -> DesktopResult:
     raw = _run_osascript([
         'tell application "System Events"',
-        'set p to first application process whose frontmost is true',
-        'return name of p',
+        'set matches to application processes whose frontmost is true',
+        'if (count of matches) is not 1 then error "ambiguous frontmost application"',
+        'set p to item 1 of matches',
+        'set appName to name of p',
+        'set appPid to unix id of p',
+        'set windowTitle to ""',
+        'if (count of windows of p) > 0 then set windowTitle to name of front window of p as text',
+        'return appName & tab & (appPid as text) & tab & "true" & tab & windowTitle',
         'end tell',
     ])
-    return DesktopResult(True, "frontmost", {"application": raw})
+    return DesktopResult(True, "focused-window", _parse_window_row(raw))
 
 
 def list_windows() -> DesktopResult:
@@ -66,22 +102,42 @@ def list_windows() -> DesktopResult:
         'set output to {}',
         'repeat with p in (application processes whose background only is false)',
         'set appName to name of p',
+        'set appPid to unix id of p',
+        'set appFrontmost to frontmost of p',
         'repeat with w in windows of p',
         'try',
-        'set end of output to appName & tab & (name of w as text)',
+        'set end of output to appName & tab & (appPid as text) & tab & (appFrontmost as text) & tab & (name of w as text)',
         'end try',
         'end repeat',
         'end repeat',
-        'return output as string',
+        'set previousDelimiters to AppleScript\'s text item delimiters',
+        'set AppleScript\'s text item delimiters to linefeed',
+        'set payload to output as text',
+        'set AppleScript\'s text item delimiters to previousDelimiters',
+        'return payload',
         'end tell',
     ])
-    windows: list[dict[str, str]] = []
+    windows: list[dict[str, object]] = []
     if raw:
-        for row in raw.replace(", ", "\n").splitlines():
-            if "\t" in row:
-                app, title = row.split("\t", 1)
-                windows.append({"application": app, "title": title})
-    return DesktopResult(True, "windows", {"windows": windows})
+        windows = [_parse_window_row(row) for row in raw.splitlines() if row.strip()]
+    return DesktopResult(True, "windows", {"windows": windows, "errors": []})
+
+
+def _assert_focused_window(
+    *,
+    expected_pid: int | None = None,
+    expected_title: str | None = None,
+) -> dict[str, object]:
+    current = focused_window().data
+    if expected_pid is not None and current["pid"] != expected_pid:
+        raise DesktopError(
+            f"focused window PID mismatch: expected {expected_pid}, got {current['pid']}"
+        )
+    if expected_title is not None and current["title"] != expected_title:
+        raise DesktopError(
+            f"focused window title mismatch: expected {expected_title!r}, got {current['title']!r}"
+        )
+    return current
 
 
 def activate_application(name: str, *, approved: bool = False) -> DesktopResult:
@@ -89,12 +145,29 @@ def activate_application(name: str, *, approved: bool = False) -> DesktopResult:
         raise DesktopError("desktop mutation requires explicit approval")
     safe = json.dumps(name)
     _run_osascript([f"tell application {safe} to activate"])
-    return DesktopResult(True, "activate", {"application": name})
+    current = focused_window().data
+    return DesktopResult(
+        True,
+        "activate",
+        {"application": name, "focused": current},
+    )
 
 
-def keystroke(keys: str, *, modifiers: Sequence[str] = (), approved: bool = False) -> DesktopResult:
+def keystroke(
+    keys: str,
+    *,
+    modifiers: Sequence[str] = (),
+    approved: bool = False,
+    expected_pid: int | None = None,
+    expected_title: str | None = None,
+) -> DesktopResult:
     if not approved:
         raise DesktopError("desktop mutation requires explicit approval")
+
+    focused = _assert_focused_window(
+        expected_pid=expected_pid,
+        expected_title=expected_title,
+    )
 
     modifier_map = {
         "command": "command down",
@@ -124,25 +197,54 @@ def keystroke(keys: str, *, modifiers: Sequence[str] = (), approved: bool = Fals
     return DesktopResult(
         True,
         "keystroke",
-        {"keys": keys, "modifiers": [item.strip().lower() for item in modifiers]},
+        {
+            "keys": keys,
+            "modifiers": [item.strip().lower() for item in modifiers],
+            "target": focused,
+        },
     )
 
 
-def click_at(x: int, y: int, *, approved: bool = False) -> DesktopResult:
+def click_at(
+    x: int,
+    y: int,
+    *,
+    approved: bool = False,
+    expected_pid: int | None = None,
+    expected_title: str | None = None,
+) -> DesktopResult:
     if not approved:
         raise DesktopError("desktop mutation requires explicit approval")
     if x < 0 or y < 0:
         raise DesktopError("click coordinates must be non-negative")
+
+    focused = _assert_focused_window(
+        expected_pid=expected_pid,
+        expected_title=expected_title,
+    )
     _run_osascript([
         'tell application "System Events"',
         f'click at {{{int(x)}, {int(y)}}}',
         'end tell',
     ])
-    return DesktopResult(True, "click", {"x": int(x), "y": int(y)})
+    return DesktopResult(
+        True,
+        "click",
+        {"x": int(x), "y": int(y), "target": focused},
+    )
 
 
-def capture_screen(output: str | Path | None = None) -> DesktopResult:
+def capture_screen(
+    output: str | Path | None = None,
+    *,
+    expected_pid: int | None = None,
+    expected_title: str | None = None,
+) -> DesktopResult:
     _require_macos()
+    focused = _assert_focused_window(
+        expected_pid=expected_pid,
+        expected_title=expected_title,
+    )
     if output is None:
         target = Path(tempfile.gettempdir()) / "warpblack-desktop.png"
     else:
@@ -160,4 +262,8 @@ def capture_screen(output: str | Path | None = None) -> DesktopResult:
     if completed.returncode != 0:
         message = (completed.stderr or completed.stdout or "screencapture failed").strip()
         raise DesktopError(message)
-    return DesktopResult(True, "capture", {"path": str(target)})
+    return DesktopResult(
+        True,
+        "capture",
+        {"path": str(target), "target": focused},
+    )
