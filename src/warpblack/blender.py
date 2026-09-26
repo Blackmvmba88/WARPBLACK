@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 import shutil
 import subprocess
+import textwrap
 
 
 RESULT_PREFIX = "WARPBLACK_BLENDER_RESULT="
@@ -30,6 +31,7 @@ class BlenderTransactionResult:
     blender_binary: str
     source_sha256_before: str
     source_sha256_after: str
+    proof_renders: dict[str, dict[str, str]]
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -43,6 +45,7 @@ class BlenderTransactionResult:
             "blender_binary": self.blender_binary,
             "source_sha256_before": self.source_sha256_before,
             "source_sha256_after": self.source_sha256_after,
+            "proof_renders": self.proof_renders,
         }
 
 
@@ -86,26 +89,113 @@ def _delta(raw: object) -> tuple[float, float, float]:
     return tuple(values)  # type: ignore[return-value]
 
 
-def _script(object_name: str, delta: tuple[float, float, float]) -> str:
+def _proof_paths(evidence_dir: Path | None) -> dict[str, Path]:
+    if evidence_dir is None:
+        return {}
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    return {
+        "before": evidence_dir / "before.png",
+        "after": evidence_dir / "after.png",
+        "restored": evidence_dir / "restored.png",
+    }
+
+
+def _script(
+    object_name: str,
+    delta: tuple[float, float, float],
+    proof_paths: dict[str, Path],
+) -> str:
     name_json = json.dumps(object_name)
     delta_json = json.dumps(list(delta))
-    return (
-        "import bpy, json\n"
-        f"name = {name_json}\n"
-        f"delta = {delta_json}\n"
-        "obj = bpy.data.objects.get(name)\n"
-        "if obj is None:\n"
-        "    raise RuntimeError(f'object not found: {name}')\n"
-        "before = tuple(float(v) for v in obj.location)\n"
-        "obj.location = tuple(before[i] + float(delta[i]) for i in range(3))\n"
-        "after = tuple(float(v) for v in obj.location)\n"
-        "obj.location = before\n"
-        "restored = tuple(float(v) for v in obj.location)\n"
-        "verified = all(abs(restored[i] - before[i]) <= 1e-9 for i in range(3))\n"
-        "payload = {'before': before, 'after': after, 'restored': restored, 'restore_verified': verified}\n"
-        f"print('{RESULT_PREFIX}' + json.dumps(payload, sort_keys=True))\n"
-        "if not verified:\n"
-        "    raise RuntimeError('restore verification failed')\n"
+    paths_json = json.dumps({key: str(value) for key, value in proof_paths.items()})
+    return textwrap.dedent(
+        f"""
+        import bpy
+        import json
+        import math
+        from mathutils import Vector
+
+        name = {name_json}
+        delta = {delta_json}
+        proof_paths = {paths_json}
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            raise RuntimeError(f"object not found: {{name}}")
+
+        def proof_render(path):
+            if not path:
+                return
+            scene = bpy.context.scene
+            for candidate in scene.objects:
+                if hasattr(candidate, "hide_render"):
+                    candidate.hide_render = candidate != obj
+
+            corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+            center = sum(corners, Vector()) / 8.0
+            radius = max((corner - center).length for corner in corners)
+            radius = max(radius, 0.25)
+
+            camera_data = bpy.data.cameras.new("WARPBLACK_PROOF_CAMERA")
+            camera = bpy.data.objects.new("WARPBLACK_PROOF_CAMERA", camera_data)
+            scene.collection.objects.link(camera)
+            scene.camera = camera
+
+            direction = Vector((1.6, -2.2, 1.4))
+            direction.normalize()
+            camera.location = center + direction * radius * 3.2
+            camera.rotation_euler = (center - camera.location).to_track_quat("-Z", "Y").to_euler()
+            camera.data.lens = 52
+
+            light_data = bpy.data.lights.new("WARPBLACK_KEY", type="AREA")
+            light_data.energy = 1200
+            light_data.shape = "DISK"
+            light_data.size = max(radius * 2.0, 1.0)
+            light = bpy.data.objects.new("WARPBLACK_KEY", light_data)
+            scene.collection.objects.link(light)
+            light.location = center + Vector((radius * 2.0, -radius * 1.5, radius * 2.5))
+
+            fill_data = bpy.data.lights.new("WARPBLACK_FILL", type="AREA")
+            fill_data.energy = 500
+            fill_data.size = max(radius * 2.5, 1.0)
+            fill = bpy.data.objects.new("WARPBLACK_FILL", fill_data)
+            scene.collection.objects.link(fill)
+            fill.location = center + Vector((-radius * 2.0, radius * 1.0, radius * 1.0))
+
+            scene.render.resolution_x = 512
+            scene.render.resolution_y = 512
+            scene.render.resolution_percentage = 100
+            scene.render.image_settings.file_format = "PNG"
+            scene.render.image_settings.color_mode = "RGBA"
+            scene.render.film_transparent = True
+            scene.render.filepath = path
+            try:
+                scene.render.engine = "BLENDER_EEVEE_NEXT"
+            except Exception:
+                pass
+            bpy.ops.render.render(write_still=True)
+
+        before = tuple(float(v) for v in obj.location)
+        proof_render(proof_paths.get("before"))
+
+        obj.location = tuple(before[i] + float(delta[i]) for i in range(3))
+        after = tuple(float(v) for v in obj.location)
+        proof_render(proof_paths.get("after"))
+
+        obj.location = before
+        restored = tuple(float(v) for v in obj.location)
+        proof_render(proof_paths.get("restored"))
+
+        verified = all(abs(restored[i] - before[i]) <= 1e-9 for i in range(3))
+        payload = {{
+            "before": before,
+            "after": after,
+            "restored": restored,
+            "restore_verified": verified,
+        }}
+        print("{RESULT_PREFIX}" + json.dumps(payload, sort_keys=True))
+        if not verified:
+            raise RuntimeError("restore verification failed")
+        """
     )
 
 
@@ -116,6 +206,7 @@ def translate_restore(
     delta: object,
     approved: bool,
     timeout_s: float = DEFAULT_TIMEOUT_S,
+    evidence_dir: Path | None = None,
 ) -> BlenderTransactionResult:
     if not approved:
         raise BlenderError("explicit approval is required")
@@ -129,6 +220,7 @@ def translate_restore(
         raise BlenderError("timeout must be between 0 and 300 seconds")
 
     safe_delta = _delta(delta)
+    proof_paths = _proof_paths(evidence_dir)
     source_sha256_before = _sha256(blend_file)
     blender = _trusted_blender_binary()
     command = [
@@ -136,7 +228,7 @@ def translate_restore(
         "--background",
         str(blend_file),
         "--python-expr",
-        _script(object_name.strip(), safe_delta),
+        _script(object_name.strip(), safe_delta, proof_paths),
     ]
     completed = subprocess.run(
         command,
@@ -175,6 +267,15 @@ def translate_restore(
     if verified is not True:
         raise BlenderError("restore verification failed")
 
+    proof_renders: dict[str, dict[str, str]] = {}
+    for phase, path in proof_paths.items():
+        if not path.is_file():
+            raise BlenderError(f"missing {phase} proof render")
+        proof_renders[phase] = {
+            "path": str(path),
+            "sha256": _sha256(path),
+        }
+
     return BlenderTransactionResult(
         file=str(blend_file),
         object_name=object_name.strip(),
@@ -186,4 +287,5 @@ def translate_restore(
         blender_binary=blender,
         source_sha256_before=source_sha256_before,
         source_sha256_after=source_sha256_after,
+        proof_renders=proof_renders,
     )
