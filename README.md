@@ -128,6 +128,47 @@ OBSERVE → PLAN → ACT → CAPTURE → VERIFY
 
 This milestone is the base for application-specific adapters such as Blender and Arduino IDE.
 
+## BM-DESKTOP-003 — Semantic UI Agent
+
+WARPBLACK can now inspect the macOS Accessibility tree for the focused window and target
+actionable controls by their human-readable label instead of hard-coded pixel coordinates.
+
+Inspect the focused UI:
+
+```bash
+warpblack desktop elements
+```
+
+Click a uniquely matched control:
+
+```bash
+warpblack desktop click-label "Render" --exact --approve
+```
+
+Optionally require a visible screen change after the click:
+
+```bash
+warpblack desktop click-label "Render" --exact --verify-change --approve
+```
+
+The semantic click remains fail-closed:
+
+- mutations still require explicit `--approve`
+- the focused PID/title can be pinned before observation and action
+- only actionable Accessibility roles are considered by default
+- ambiguous labels are rejected instead of guessing
+- the click uses the matched element's current geometry, not stored coordinates
+- optional screenshot SHA-256 comparison provides a first visual read-back signal
+
+This establishes the deterministic half of the agent loop:
+
+```text
+OBSERVE UI → RESOLVE LABEL → ACT → READ BACK → VERIFY
+```
+
+Computer vision can now be added as a fallback for unlabeled canvas controls without weakening
+the semantic/accessibility path.
+
 ## Project workspace registry
 
 WARPBLACK can act as a project workbench instead of assuming one fixed workspace. Project folders
