@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .blender import BlenderError, translate_restore
 from .contracts import Capability, ExecutionPlan, IntentEnvelope, ResultEnvelope
 from .executor import TerminalExecutor
 from .models import CommandRequest
