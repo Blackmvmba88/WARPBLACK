@@ -63,7 +63,7 @@ def test_certificate_writes_manifest_and_checksum(tmp_path: Path, monkeypatch) -
         "application": "Blender",
         "pid": 60293,
         "frontmost": True,
-        "title": "COMBI_TOPOLOGIA_PRO.blend - Blender 5.2.0 LTS",
+        "title": "scene.blend - Blender 5.2.0 LTS",
     }
     monkeypatch.setattr(
         certificate,
@@ -98,3 +98,28 @@ def test_certificate_writes_manifest_and_checksum(tmp_path: Path, monkeypatch) -
     assert (cert.parent / "certificate.sha256").is_file()
     assert result.desktop_identity["pid"] == 60293
     assert result.transaction.restore_verified is True
+
+
+def test_certificate_rejects_wrong_blender_file(tmp_path: Path, monkeypatch) -> None:
+    scene = tmp_path / "scene.blend"
+    scene.write_bytes(b"BLENDER")
+    monkeypatch.setattr(
+        certificate,
+        "focused_window",
+        lambda: DesktopResult(True, "focused-window", {
+            "application": "Blender",
+            "pid": 60293,
+            "frontmost": True,
+            "title": "other.blend - Blender 5.2.0 LTS",
+        }),
+    )
+
+    with pytest.raises(BlenderCertificateError, match="does not match target file"):
+        certify_translate_restore(
+            scene,
+            workspace_root=tmp_path,
+            request_id="bm-blender-002-wrong-window",
+            object_name="Mirror_L",
+            delta=[0.01, 0.0, 0.0],
+            approved=True,
+        )
