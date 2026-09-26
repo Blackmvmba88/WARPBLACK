@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -27,6 +28,8 @@ class BlenderTransactionResult:
     restored: tuple[float, float, float]
     restore_verified: bool
     blender_binary: str
+    source_sha256_before: str
+    source_sha256_after: str
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -38,7 +41,17 @@ class BlenderTransactionResult:
             "restored": list(self.restored),
             "restore_verified": self.restore_verified,
             "blender_binary": self.blender_binary,
+            "source_sha256_before": self.source_sha256_before,
+            "source_sha256_after": self.source_sha256_after,
         }
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _trusted_blender_binary() -> str:
@@ -116,6 +129,7 @@ def translate_restore(
         raise BlenderError("timeout must be between 0 and 300 seconds")
 
     safe_delta = _delta(delta)
+    source_sha256_before = _sha256(blend_file)
     blender = _trusted_blender_binary()
     command = [
         blender,
@@ -133,6 +147,9 @@ def translate_restore(
         timeout=timeout_s,
         check=False,
     )
+    source_sha256_after = _sha256(blend_file)
+    if source_sha256_after != source_sha256_before:
+        raise BlenderError("source .blend changed during transaction")
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip()
         raise BlenderError(f"Blender transaction failed: {detail[-1000:]}")
@@ -167,4 +184,6 @@ def translate_restore(
         restored=vec("restored"),
         restore_verified=True,
         blender_binary=blender,
+        source_sha256_before=source_sha256_before,
+        source_sha256_after=source_sha256_after,
     )
