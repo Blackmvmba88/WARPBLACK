@@ -68,3 +68,35 @@ def test_translate_restore_parses_and_verifies_evidence(
     assert result.after == (1.01, 2.0, 3.0)
     assert result.restored == result.before
     assert result.restore_verified is True
+    assert result.source_sha256_before == result.source_sha256_after
+
+
+def test_translate_restore_fails_if_source_file_changes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    scene = tmp_path / "scene.blend"
+    scene.write_bytes(b"BLENDER")
+    monkeypatch.setattr(blender, "_trusted_blender_binary", lambda: "/trusted/blender")
+
+    def fake_run(command, **kwargs):
+        scene.write_bytes(b"MUTATED")
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=(
+                'WARPBLACK_BLENDER_RESULT={"after":[0.01,0.0,0.0],'
+                '"before":[0.0,0.0,0.0],"restore_verified":true,'
+                '"restored":[0.0,0.0,0.0]}\n'
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(blender.subprocess, "run", fake_run)
+
+    with pytest.raises(BlenderError, match="source \\.blend changed"):
+        translate_restore(
+            scene,
+            object_name="Mirror_L",
+            delta=[0.01, 0.0, 0.0],
+            approved=True,
+        )
