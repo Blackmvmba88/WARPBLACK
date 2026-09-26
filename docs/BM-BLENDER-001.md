@@ -16,6 +16,7 @@ Prove that WARPBLACK can perform one bounded Blender operation against a real `.
 - The adapter launches trusted Blender in background mode.
 - WARPBLACK supplies fixed transaction code; callers cannot supply arbitrary Python.
 - The adapter never saves the `.blend` file.
+- SHA-256 is computed before and after execution; any source-file change fails closed.
 - Success requires exact restoration verification.
 
 ## Real-machine acceptance payload
@@ -51,7 +52,7 @@ The result is accepted only when all of the following are true:
 6. Y and Z are unchanged
 7. `restored == before` within the adapter tolerance
 8. `restore_verified == true`
-9. the source `.blend` modification timestamp/hash remains unchanged by the capability
+9. `source_sha256_before == source_sha256_after`
 
 ## Expected evidence shape
 
@@ -68,7 +69,9 @@ The result is accepted only when all of the following are true:
     "after": [0.01, 0.0, 0.0],
     "restored": [0.0, 0.0, 0.0],
     "restore_verified": true,
-    "blender_binary": "/Applications/Blender.app/Contents/MacOS/Blender"
+    "blender_binary": "/Applications/Blender.app/Contents/MacOS/Blender",
+    "source_sha256_before": "<sha256>",
+    "source_sha256_after": "<same-sha256>"
   }
 }
 ```
@@ -87,7 +90,8 @@ The capability must fail closed when:
 - Blender cannot be found;
 - Blender exits non-zero;
 - evidence is missing or malformed;
-- restoration cannot be verified.
+- restoration cannot be verified;
+- the source `.blend` hash changes during execution.
 
 ## Next gate
 
