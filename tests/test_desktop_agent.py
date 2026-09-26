@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import math
 import pytest
 
 import warpblack.desktop_agent as agent
 from warpblack.desktop import DesktopError, DesktopResult
-from warpblack.desktop_agent import UIElement, click_label, find_ui_elements
+from warpblack.desktop_agent import UIElement, click_label, find_ui_elements, inspect_ui
 
 
 def _payload(elements: list[UIElement]) -> DesktopResult:
@@ -16,6 +17,25 @@ def _payload(elements: list[UIElement]) -> DesktopResult:
             "elements": [item.to_dict() for item in elements],
         },
     )
+
+
+def test_inspect_ui_binds_scan_to_validated_pid(monkeypatch) -> None:
+    focus = {"application": "Blender", "pid": 77, "title": "Scene.blend"}
+    monkeypatch.setattr(agent, "_assert_focused_window", lambda **kwargs: focus)
+    scripts: list[list[str]] = []
+
+    def fake_run(lines, *, timeout_s=10.0):
+        scripts.append(list(lines))
+        return "AXButton\tRender\t\t100\t50\t80\t30"
+
+    monkeypatch.setattr(agent, "_run_osascript", fake_run)
+
+    payload = inspect_ui().to_dict()
+
+    script = "\n".join(scripts[0])
+    assert "unix id is 77" in script
+    assert "validated application lost focus" in script
+    assert payload["data"]["target"]["pid"] == 77
 
 
 def test_find_ui_elements_prefers_exact_match(monkeypatch) -> None:
@@ -48,6 +68,12 @@ def test_click_label_requires_approval() -> None:
         click_label("Render")
 
 
+@pytest.mark.parametrize("settle", [math.nan, math.inf, -math.inf, -0.1, 5.1])
+def test_click_label_rejects_invalid_settle_before_mutation(settle) -> None:
+    with pytest.raises(DesktopError, match="settle time"):
+        click_label("Render", approved=True, settle_s=settle)
+
+
 def test_click_label_fails_closed_when_ambiguous(monkeypatch) -> None:
     monkeypatch.setattr(
         agent,
@@ -67,13 +93,15 @@ def test_click_label_fails_closed_when_ambiguous(monkeypatch) -> None:
         click_label("OK", approved=True)
 
 
-def test_click_label_clicks_center_and_checks_focus(monkeypatch) -> None:
+def test_click_label_clicks_center_and_allows_focus_change(monkeypatch) -> None:
     focus = {"application": "Blender", "pid": 77, "title": "Scene.blend"}
+    next_focus = {"application": "Safari", "pid": 88, "title": "Result"}
     monkeypatch.setattr(agent, "_assert_focused_window", lambda **kwargs: focus)
+    monkeypatch.setattr(agent, "focused_window", lambda: DesktopResult(True, "focused-window", next_focus))
     monkeypatch.setattr(
         agent,
         "find_ui_elements",
-        lambda *args, **kwargs: [UIElement("AXButton", "Render", "", 100, 50, 80, 30)],
+        lambda *args, **kwargs: [UIElement("AXLink", "Docs", "", 100, 50, 80, 30)],
     )
 
     calls: list[tuple[int, int, dict[str, object]]] = []
@@ -84,8 +112,9 @@ def test_click_label_clicks_center_and_checks_focus(monkeypatch) -> None:
 
     monkeypatch.setattr(agent, "click_at", fake_click)
 
-    result = click_label("Render", approved=True)
+    result = click_label("Docs", approved=True)
 
     assert calls[0][0:2] == (140, 65)
     assert calls[0][2]["expected_pid"] == 77
-    assert result.data["matched"]["label"] == "Render"
+    assert result.data["post_focus"]["pid"] == 88
+    assert result.data["focus_changed"] is True
