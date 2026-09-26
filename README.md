@@ -169,6 +169,54 @@ OBSERVE UI → RESOLVE LABEL → ACT → READ BACK → VERIFY
 Computer vision can now be added as a fallback for unlabeled canvas controls without weakening
 the semantic/accessibility path.
 
+## BM-DESKTOP-004 — Stale-safe Visual Agent
+
+When a control is not exposed through macOS Accessibility, WARPBLACK can fall back to a visual
+planner without turning raw screen coordinates into an unbounded action surface.
+
+Create the exact screenshot that the planner will inspect:
+
+```bash
+warpblack desktop visual-snapshot --output /tmp/warpblack-plan.png
+```
+
+The result includes the image path, pixel dimensions, focused-window identity, and SHA-256 digest.
+After a vision model or human selects a bounding box, execute it only against that exact snapshot:
+
+```bash
+warpblack desktop click-box 100 50 80 30 \
+  --snapshot-sha <sha256-from-visual-snapshot> \
+  --confidence 0.97 \
+  --label "Render icon" \
+  --approve
+```
+
+Before clicking, WARPBLACK immediately captures the screen again and requires the SHA-256 to still
+match the planner snapshot. If anything changed between observe and act, the action fails closed.
+The visual executor also rejects out-of-bounds boxes, malformed hashes, non-finite values, and
+detections below the configured confidence threshold.
+
+Optional read-back:
+
+```bash
+warpblack desktop click-box 100 50 80 30 \
+  --snapshot-sha <sha256> \
+  --confidence 0.97 \
+  --verify-change \
+  --approve
+```
+
+The combined target resolver is now:
+
+```text
+Accessibility label ───────────────┐
+                                   ├→ bounded click → read back → certify
+exact screenshot + visual box ─────┘
+```
+
+The semantic path remains preferred. Visual coordinates are a bounded fallback and must always be
+bound to the image that produced them.
+
 ## Project workspace registry
 
 WARPBLACK can act as a project workbench instead of assuming one fixed workspace. Project folders
