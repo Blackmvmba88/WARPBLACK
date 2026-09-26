@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import hashlib
+import math
 from pathlib import Path
 import tempfile
 import time
@@ -15,6 +16,7 @@ from .desktop import (
     _run_osascript,
     capture_screen,
     click_at,
+    focused_window,
 )
 
 
@@ -86,11 +88,13 @@ def inspect_ui(
         expected_pid=expected_pid,
         expected_title=expected_title,
     )
+    pid = int(focused["pid"])
     raw = _run_osascript([
         'tell application "System Events"',
-        'set matches to application processes whose frontmost is true',
-        'if (count of matches) is not 1 then error "ambiguous frontmost application"',
+        f'set matches to application processes whose unix id is {pid}',
+        'if (count of matches) is not 1 then error "validated application is unavailable"',
         'set p to item 1 of matches',
+        'if frontmost of p is false then error "validated application lost focus"',
         'if (count of windows of p) = 0 then return ""',
         'set output to {}',
         'set elems to entire contents of front window of p',
@@ -200,8 +204,8 @@ def click_label(
 ) -> DesktopResult:
     if not approved:
         raise DesktopError("desktop mutation requires explicit approval")
-    if settle_s < 0 or settle_s > 5:
-        raise DesktopError("settle time must be between 0 and 5 seconds")
+    if not math.isfinite(settle_s) or settle_s < 0 or settle_s > 5:
+        raise DesktopError("settle time must be finite and between 0 and 5 seconds")
 
     focused = _assert_focused_window(
         expected_pid=expected_pid,
@@ -249,18 +253,18 @@ def click_label(
             expected_title=title,
         )
 
-        visual_changed: bool | None = None
         if verify_change:
             time.sleep(settle_s)
-            post_focus = _assert_focused_window(expected_pid=pid)
+
+        post_focus = focused_window().data
+        visual_changed: bool | None = None
+        if verify_change:
             after_path = Path(tempfile.gettempdir()) / f"warpblack-after-{uuid4().hex}.png"
-            capture_screen(after_path, expected_pid=pid)
+            capture_screen(after_path)
             after_hash = _sha256(after_path)
             visual_changed = before_hash != after_hash
             if not visual_changed:
                 raise DesktopError("semantic click completed but visual verification found no screen change")
-        else:
-            post_focus = _assert_focused_window(expected_pid=pid)
 
         return DesktopResult(
             True,
@@ -271,6 +275,7 @@ def click_label(
                 "matched": target.to_dict(),
                 "click": click_result.data,
                 "post_focus": post_focus,
+                "focus_changed": post_focus.get("pid") != pid or post_focus.get("title") != title,
                 "verification": {
                     "enabled": verify_change,
                     "visual_changed": visual_changed,
