@@ -43,6 +43,13 @@ class CapabilityRegistry:
                 mutates=False,
                 requires_approval=False,
             ),
+            "blender.object.translate_restore": Capability(
+                name="blender.object.translate_restore",
+                description="Move one Blender object by a bounded delta, verify it, then restore it without saving",
+                risk="elevated",
+                mutates=False,
+                requires_approval=True,
+            ),
         }
 
     def describe(self) -> tuple[Capability, ...]:
@@ -60,11 +67,20 @@ class CapabilityRegistry:
                 "read through the audited read-only executor",
                 "return content and execution evidence",
             )
-        else:
+        elif capability.name == "git.status":
             steps = (
                 "resolve repository target inside configured workspace",
                 "run git status --short --branch through the safety policy",
                 "return branch and working-tree evidence",
+            )
+        else:
+            steps = (
+                "resolve .blend target inside configured workspace",
+                "validate explicit approval, object name, and bounded XYZ delta",
+                "open Blender in background with fixed generated transaction code",
+                "record before and after locations",
+                "restore the exact original location and verify restoration",
+                "return structured evidence without saving the .blend file",
             )
 
         return ExecutionPlan(
@@ -83,6 +99,8 @@ class CapabilityRegistry:
             return self._read_file(intent, plan)
         if intent.intent == "git.status":
             return self._git_status(intent, plan)
+        if intent.intent == "blender.object.translate_restore":
+            return self._blender_translate_restore(intent, plan)
         raise CapabilityError(f"unimplemented intent: {intent.intent}")
 
     def _resolve_target(self, raw: str) -> Path:
@@ -154,6 +172,44 @@ class CapabilityRegistry:
                 "content": result.stdout,
                 "execution": result.to_dict(),
             },
+            plan=plan,
+        )
+
+    def _blender_translate_restore(
+        self,
+        intent: IntentEnvelope,
+        plan: ExecutionPlan,
+    ) -> ResultEnvelope:
+        target = self._resolve_target(intent.target)
+        if not target.is_file() or target.suffix.lower() != ".blend":
+            raise CapabilityError("blender target must be an existing .blend file")
+
+        object_name = intent.constraints.get("object")
+        delta = intent.constraints.get("delta")
+        approved = intent.constraints.get("approved") is True
+        timeout_raw = intent.constraints.get("timeout_s", 120.0)
+        if isinstance(timeout_raw, bool) or not isinstance(timeout_raw, (int, float)):
+            raise CapabilityError("timeout_s must be a number")
+
+        try:
+            evidence = translate_restore(
+                target,
+                object_name=object_name if isinstance(object_name, str) else "",
+                delta=delta,
+                approved=approved,
+                timeout_s=float(timeout_raw),
+            ).to_dict()
+        except BlenderError as exc:
+            raise CapabilityError(str(exc)) from exc
+
+        return ResultEnvelope(
+            request_id=intent.request_id,
+            status="success",
+            capability=intent.intent,
+            project=intent.project,
+            changed=False,
+            summary=f"verified and restored Blender object {evidence['object']}",
+            evidence=evidence,
             plan=plan,
         )
 
