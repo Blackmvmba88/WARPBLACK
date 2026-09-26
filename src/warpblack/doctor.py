@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import platform
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,22 @@ def run_doctor(
         DoctorCheck("github_cli", shutil.which("gh") is not None, shutil.which("gh") or "missing")
     )
     checks.append(DoctorCheck("workspace", root.is_dir(), str(root)))
+
+    if platform.system() == "Darwin":
+        checks.append(
+            DoctorCheck(
+                "desktop_osascript",
+                shutil.which("osascript") is not None,
+                shutil.which("osascript") or "missing",
+            )
+        )
+        checks.append(
+            DoctorCheck(
+                "desktop_screencapture",
+                shutil.which("screencapture") is not None,
+                shutil.which("screencapture") or "missing",
+            )
+        )
 
     if repository:
         checks.append(
