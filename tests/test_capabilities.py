@@ -95,3 +95,24 @@ def test_plan_rejects_unknown_intent(tmp_path: Path) -> None:
 
     with pytest.raises(CapabilityError, match="unknown intent"):
         registry.plan(intent)
+
+
+def test_blender_translate_restore_rejects_workspace_escape(tmp_path: Path) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.blend"
+    outside.write_bytes(b"BLENDER")
+    registry = CapabilityRegistry(tmp_path)
+
+    with pytest.raises(CapabilityError, match="escapes"):
+        registry.execute(
+            IntentEnvelope.from_payload(
+                {
+                    "intent": "blender.object.translate_restore",
+                    "target": str(outside),
+                    "constraints": {
+                        "object": "Mirror_L",
+                        "delta": [0.01, 0.0, 0.0],
+                        "approved": True,
+                    },
+                }
+            )
+        )

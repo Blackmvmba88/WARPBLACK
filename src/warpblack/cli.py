@@ -8,6 +8,8 @@ from pathlib import Path
 import sys
 
 from .audit import AuditLedger
+from .capabilities import CapabilityError, CapabilityRegistry
+from .contracts import IntentEnvelope
 from .client import WarpClient, WarpClientError
 from .construct import PatchConstructor
 from .doctor import run_doctor
@@ -163,6 +165,47 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_click.add_argument("--expect-pid", type=int)
     desktop_click.add_argument("--expect-title")
 
+
+    blender = sub.add_parser("blender", help="Run bounded structured Blender capabilities")
+    blender_sub = blender.add_subparsers(dest="blender_command", required=True)
+    blender_translate = blender_sub.add_parser(
+        "translate-restore",
+        help="Move one Blender object, verify the delta, and restore it without saving",
+    )
+    blender_translate.add_argument("target", help="Workspace-relative .blend path")
+    blender_translate.add_argument("--workspace", default=".", help="Allowed workspace root")
+    blender_translate.add_argument("--object", required=True, dest="object_name")
+    blender_translate.add_argument("--dx", type=float, default=0.0)
+    blender_translate.add_argument("--dy", type=float, default=0.0)
+    blender_translate.add_argument("--dz", type=float, default=0.0)
+    blender_translate.add_argument("--timeout", type=float, default=120.0)
+    blender_translate.add_argument("--request-id")
+    blender_translate.add_argument("--project")
+    blender_translate.add_argument(
+        "--approve",
+        action="store_true",
+        help="Explicitly approve the bounded Blender transaction",
+    )
+
+    blender_certify = blender_sub.add_parser(
+        "certify-translate-restore",
+        help="Create BM-BLENDER-002 visual and cryptographic evidence",
+    )
+    blender_certify.add_argument("target", help="Workspace-relative .blend path")
+    blender_certify.add_argument("--workspace", default=".", help="Allowed workspace root")
+    blender_certify.add_argument("--object", required=True, dest="object_name")
+    blender_certify.add_argument("--dx", type=float, default=0.0)
+    blender_certify.add_argument("--dy", type=float, default=0.0)
+    blender_certify.add_argument("--dz", type=float, default=0.0)
+    blender_certify.add_argument("--timeout", type=float, default=120.0)
+    blender_certify.add_argument("--request-id")
+    blender_certify.add_argument("--project")
+    blender_certify.add_argument(
+        "--approve",
+        action="store_true",
+        help="Explicitly approve the certified Blender transaction",
+    )
+
     github_bootstrap = sub.add_parser(
         "github-bootstrap",
         help="Verify private control repo and create required labels",
@@ -296,6 +339,37 @@ def main(argv: list[str] | None = None) -> int:
                     expected_title=args.expect_title,
                 ).to_dict()
         except DesktopError as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 3
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload.get("ok") else 1
+
+
+    if args.command == "blender":
+        workspace = Path(args.workspace).resolve()
+        try:
+            registry = CapabilityRegistry(workspace)
+            capability_name = (
+                "blender.object.translate_restore_certify"
+                if args.blender_command == "certify-translate-restore"
+                else "blender.object.translate_restore"
+            )
+            intent = IntentEnvelope.from_payload(
+                {
+                    "intent": capability_name,
+                    "target": args.target,
+                    "project": args.project,
+                    "request_id": args.request_id,
+                    "constraints": {
+                        "object": args.object_name,
+                        "delta": [args.dx, args.dy, args.dz],
+                        "approved": args.approve,
+                        "timeout_s": args.timeout,
+                    },
+                }
+            )
+            payload = registry.execute(intent).to_dict()
+        except (CapabilityError, TypeError, ValueError, OSError) as exc:
             print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
             return 3
         print(json.dumps(payload, ensure_ascii=False, indent=2))
