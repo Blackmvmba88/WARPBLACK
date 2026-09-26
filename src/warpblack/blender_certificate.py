@@ -82,6 +82,12 @@ def certify_translate_restore(
     if str(identity.get("application", "")).lower() != "blender":
         raise BlenderCertificateError("focused application must be Blender")
 
+    title = str(identity.get("title", ""))
+    if blend_file.name not in title:
+        raise BlenderCertificateError(
+            f"focused Blender window does not match target file: {blend_file.name}"
+        )
+
     desktop_path = evidence_dir / "desktop-identity.png"
     try:
         capture_screen(
