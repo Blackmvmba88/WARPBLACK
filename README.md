@@ -448,3 +448,44 @@ The next high-value layers are:
 ## Status
 
 v0.2 architecture established September 2026. Integration remains unmerged until CI produces a trustworthy green verification run.
+
+## BM-DESKTOP-001 window observations
+
+`warpblack desktop windows` returns individual application/title records using JSON
+serialization, preserving punctuation, Unicode, tabs and newlines. Per-application
+access failures appear in `data.errors` and make the result unsuccessful rather
+than silently presenting an incomplete list as complete.
+
+`warpblack desktop focused-window` returns `application`, `title`, and `frontmost`
+from the active process and its accessibility focused window. `title` is null if
+there is no window; inaccessible observations fail explicitly.
+
+## BM-BLENDER-001 initial adapter
+
+```bash
+.venv/bin/warpblack blender activate --approve
+.venv/bin/warpblack blender observe
+# Place the pointer over the intended viewport, outside text fields and dialogs.
+.venv/bin/warpblack blender shortcut toggle-sidebar --approve
+.venv/bin/warpblack blender shortcut toggle-toolbar --approve
+```
+
+Activation verifies Blender acquired a focused window. Observation requires
+Blender to be frontmost and saves a screenshot plus SHA-256 evidence in a unique
+temporary directory. Shortcuts are limited to the N/T editor toggles, require
+explicit approval, check focus at dispatch, and save before/after screenshots.
+Blender shortcuts depend on pointer position and editor context. This initial
+adapter does not identify the editor or prevent every concurrent focus change.
+
+`ok` reports successful command execution, **not** successful semantic or visual
+verification. `capture_bytes_changed` compares file bytes only. The returned
+`visual_verification: needs-review` requires reviewing the screenshots; observation
+returns `initial_scene: unverified`. The adapter does not yet automatically detect
+the default scene, inspect scene objects through Blender Python, or certify that
+a shortcut achieved its intended effect. Files, transforms, rendering, and Arduino
+integration are later milestones.
+
+The shortcut guard also requires a main-window title containing ` - Blender `
+followed by a version number, rejecting `Blender File View` before dispatch.
+It rechecks the exact focused-window title when sending the key. This conservative
+check can reject custom/localized window titles; it is not editor recognition.

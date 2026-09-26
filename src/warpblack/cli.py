@@ -1,25 +1,27 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import json
 import os
-from pathlib import Path
 import sys
+from dataclasses import asdict
+from pathlib import Path
 
+from . import blender
 from .audit import AuditLedger
 from .client import WarpClient, WarpClientError
 from .construct import PatchConstructor
-from .doctor import run_doctor
 from .desktop import (
     DesktopError,
     activate_application,
     capture_screen,
     click_at,
+    focused_window,
     frontmost_application,
     keystroke,
     list_windows,
 )
+from .doctor import run_doctor
 from .executor import TerminalExecutor
 from .github_queue import GitHubControlPlane, GitHubQueueError, token_from_env
 from .models import CommandRequest
@@ -27,7 +29,6 @@ from .policy import PolicyError
 from .project_registry import DEFAULT_PROJECTS_FILE, ProjectRegistry, ProjectRegistryError
 from .readme_absorb import ReadmeAbsorber
 from .server import BridgeConfig, serve
-
 
 DEFAULT_URL = "http://127.0.0.1:8765"
 DEFAULT_AUDIT_LOG = "~/.warpblack/audit.jsonl"
@@ -137,10 +138,20 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_argument("--repo", help="Optional private control repo as owner/name")
     doctor.add_argument("--actor", help="Optional allowlisted GitHub actor")
 
+    blender_parser = sub.add_parser("blender", help="BM-BLENDER-001 desktop adapter")
+    blender_sub = blender_parser.add_subparsers(dest="blender_command", required=True)
+    blender_sub.add_parser("observe", help="Capture focused Blender for visual review")
+    blender_activate = blender_sub.add_parser("activate", help="Activate and verify Blender")
+    blender_activate.add_argument("--approve", action="store_true")
+    blender_shortcut = blender_sub.add_parser("shortcut", help="Apply a controlled editor toggle")
+    blender_shortcut.add_argument("name", choices=sorted(blender.SHORTCUTS))
+    blender_shortcut.add_argument("--approve", action="store_true")
+
     desktop = sub.add_parser("desktop", help="Observe or control the local macOS desktop")
     desktop_sub = desktop.add_subparsers(dest="desktop_command", required=True)
     desktop_sub.add_parser("frontmost", help="Read the frontmost application")
     desktop_sub.add_parser("windows", help="List visible application windows")
+    desktop_sub.add_parser("focused-window", help="Read the focused window")
     desktop_capture = desktop_sub.add_parser("capture", help="Capture the current screen")
     desktop_capture.add_argument("--output", help="Optional PNG output path")
     desktop_activate = desktop_sub.add_parser("activate", help="Bring an application to the front")
@@ -255,12 +266,28 @@ def _github_control(args: argparse.Namespace) -> GitHubControlPlane:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
+    if args.command == "blender":
+        try:
+            if args.blender_command == "observe":
+                result = blender.observe()
+            elif args.blender_command == "activate":
+                result = blender.activate(approved=args.approve)
+            else:
+                result = blender.shortcut(args.name, approved=args.approve)
+        except (DesktopError, OSError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 3
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+        return 0 if result.ok else 1
+
     if args.command == "desktop":
         try:
             if args.desktop_command == "frontmost":
                 payload = frontmost_application().to_dict()
             elif args.desktop_command == "windows":
                 payload = list_windows().to_dict()
+            elif args.desktop_command == "focused-window":
+                payload = focused_window().to_dict()
             elif args.desktop_command == "capture":
                 payload = capture_screen(args.output).to_dict()
             elif args.desktop_command == "activate":
