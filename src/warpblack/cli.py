@@ -1,18 +1,33 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 import json
 import os
 from pathlib import Path
 import sys
 
 from .audit import AuditLedger
+from .capabilities import CapabilityError, CapabilityRegistry
+from .contracts import IntentEnvelope
 from .client import WarpClient, WarpClientError
 from .construct import PatchConstructor
+from .doctor import run_doctor
+from .desktop import (
+    DesktopError,
+    activate_application,
+    capture_screen,
+    click_at,
+    frontmost_application,
+    focused_window,
+    keystroke,
+    list_windows,
+)
 from .executor import TerminalExecutor
 from .github_queue import GitHubControlPlane, GitHubQueueError, token_from_env
 from .models import CommandRequest
 from .policy import PolicyError
+from .project_registry import DEFAULT_PROJECTS_FILE, ProjectRegistry, ProjectRegistryError
 from .readme_absorb import ReadmeAbsorber
 from .server import BridgeConfig, serve
 
@@ -120,6 +135,77 @@ def build_parser() -> argparse.ArgumentParser:
     capabilities = sub.add_parser("capabilities", help="Read authenticated bridge capabilities")
     capabilities.add_argument("--url", default=DEFAULT_URL)
 
+    doctor = sub.add_parser("doctor", help="Check whether this machine is ready to run WARPBLACK")
+    doctor.add_argument("--workspace", default=".", help="Workspace root to validate")
+    doctor.add_argument("--repo", help="Optional private control repo as owner/name")
+    doctor.add_argument("--actor", help="Optional allowlisted GitHub actor")
+
+    desktop = sub.add_parser("desktop", help="Observe or control the local macOS desktop")
+    desktop_sub = desktop.add_subparsers(dest="desktop_command", required=True)
+    desktop_sub.add_parser("frontmost", help="Read the frontmost application")
+    desktop_sub.add_parser("focused-window", help="Read PID and title of the focused window")
+    desktop_sub.add_parser("windows", help="List visible application windows")
+    desktop_capture = desktop_sub.add_parser("capture", help="Capture the current screen")
+    desktop_capture.add_argument("--output", help="Optional PNG output path")
+    desktop_capture.add_argument("--expect-pid", type=int)
+    desktop_capture.add_argument("--expect-title")
+    desktop_activate = desktop_sub.add_parser("activate", help="Bring an application to the front")
+    desktop_activate.add_argument("application")
+    desktop_activate.add_argument("--approve", action="store_true")
+    desktop_keys = desktop_sub.add_parser("keystroke", help="Send a keyboard chord")
+    desktop_keys.add_argument("keys")
+    desktop_keys.add_argument("--modifier", action="append", default=[])
+    desktop_keys.add_argument("--approve", action="store_true")
+    desktop_keys.add_argument("--expect-pid", type=int)
+    desktop_keys.add_argument("--expect-title")
+    desktop_click = desktop_sub.add_parser("click", help="Click a screen coordinate")
+    desktop_click.add_argument("x", type=int)
+    desktop_click.add_argument("y", type=int)
+    desktop_click.add_argument("--approve", action="store_true")
+    desktop_click.add_argument("--expect-pid", type=int)
+    desktop_click.add_argument("--expect-title")
+
+
+    blender = sub.add_parser("blender", help="Run bounded structured Blender capabilities")
+    blender_sub = blender.add_subparsers(dest="blender_command", required=True)
+    blender_translate = blender_sub.add_parser(
+        "translate-restore",
+        help="Move one Blender object, verify the delta, and restore it without saving",
+    )
+    blender_translate.add_argument("target", help="Workspace-relative .blend path")
+    blender_translate.add_argument("--workspace", default=".", help="Allowed workspace root")
+    blender_translate.add_argument("--object", required=True, dest="object_name")
+    blender_translate.add_argument("--dx", type=float, default=0.0)
+    blender_translate.add_argument("--dy", type=float, default=0.0)
+    blender_translate.add_argument("--dz", type=float, default=0.0)
+    blender_translate.add_argument("--timeout", type=float, default=120.0)
+    blender_translate.add_argument("--request-id")
+    blender_translate.add_argument("--project")
+    blender_translate.add_argument(
+        "--approve",
+        action="store_true",
+        help="Explicitly approve the bounded Blender transaction",
+    )
+
+    blender_certify = blender_sub.add_parser(
+        "certify-translate-restore",
+        help="Create BM-BLENDER-002 visual and cryptographic evidence",
+    )
+    blender_certify.add_argument("target", help="Workspace-relative .blend path")
+    blender_certify.add_argument("--workspace", default=".", help="Allowed workspace root")
+    blender_certify.add_argument("--object", required=True, dest="object_name")
+    blender_certify.add_argument("--dx", type=float, default=0.0)
+    blender_certify.add_argument("--dy", type=float, default=0.0)
+    blender_certify.add_argument("--dz", type=float, default=0.0)
+    blender_certify.add_argument("--timeout", type=float, default=120.0)
+    blender_certify.add_argument("--request-id")
+    blender_certify.add_argument("--project")
+    blender_certify.add_argument(
+        "--approve",
+        action="store_true",
+        help="Explicitly approve the certified Blender transaction",
+    )
+
     github_bootstrap = sub.add_parser(
         "github-bootstrap",
         help="Verify private control repo and create required labels",
@@ -132,6 +218,41 @@ def build_parser() -> argparse.ArgumentParser:
     github_watch = sub.add_parser("github-watch", help="Watch a private GitHub repo for jobs")
     _add_github_control_args(github_watch)
     github_watch.add_argument("--poll", type=float, default=5.0, help="Polling interval in seconds")
+
+    projects = sub.add_parser(
+        "projects",
+        help="Register project folders and maintain a logical order independent of disk layout",
+    )
+    projects.add_argument(
+        "--registry",
+        default=DEFAULT_PROJECTS_FILE,
+        help="Persistent project registry JSON file",
+    )
+    project_sub = projects.add_subparsers(dest="projects_command", required=True)
+
+    project_add = project_sub.add_parser("add", help="Register one project folder")
+    project_add.add_argument("path")
+    project_add.add_argument("--name")
+    project_add.add_argument("--group")
+    project_add.add_argument("--status", default="active")
+    project_add.add_argument("--position", type=int, help="1-based logical position")
+
+    project_scan = project_sub.add_parser("scan", help="Discover project folders below a root")
+    project_scan.add_argument("root")
+    project_scan.add_argument("--depth", type=int, default=2)
+    project_scan.add_argument("--group")
+
+    project_sub.add_parser("list", help="List projects in canonical logical order")
+
+    project_move = project_sub.add_parser("move", help="Move a project in logical order")
+    project_move.add_argument("project", help="Project id, unique name, or registered path")
+    project_move.add_argument("position", type=int, help="1-based target position")
+
+    project_remove = project_sub.add_parser("remove", help="Remove a project from the registry")
+    project_remove.add_argument("project", help="Project id, unique name, or registered path")
+
+    project_refresh = project_sub.add_parser("refresh", help="Refresh project metadata and missing state")
+    project_refresh.add_argument("project", nargs="?", help="Optional project id/name/path")
 
     return parser
 
@@ -166,6 +287,12 @@ def _parse_checks(raw_values: list[str]) -> list[list[str]]:
     return checks
 
 
+def _project_payload(entry) -> dict[str, object]:
+    payload = asdict(entry)
+    payload["position"] = entry.order + 1
+    return payload
+
+
 def _github_control(args: argparse.Namespace) -> GitHubControlPlane:
     return GitHubControlPlane(
         token=token_from_env(),
@@ -178,6 +305,136 @@ def _github_control(args: argparse.Namespace) -> GitHubControlPlane:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command == "desktop":
+        try:
+            if args.desktop_command == "frontmost":
+                payload = frontmost_application().to_dict()
+            elif args.desktop_command == "focused-window":
+                payload = focused_window().to_dict()
+            elif args.desktop_command == "windows":
+                payload = list_windows().to_dict()
+            elif args.desktop_command == "capture":
+                payload = capture_screen(
+                    args.output,
+                    expected_pid=args.expect_pid,
+                    expected_title=args.expect_title,
+                ).to_dict()
+            elif args.desktop_command == "activate":
+                payload = activate_application(args.application, approved=args.approve).to_dict()
+            elif args.desktop_command == "keystroke":
+                payload = keystroke(
+                    args.keys,
+                    modifiers=args.modifier,
+                    approved=args.approve,
+                    expected_pid=args.expect_pid,
+                    expected_title=args.expect_title,
+                ).to_dict()
+            else:
+                payload = click_at(
+                    args.x,
+                    args.y,
+                    approved=args.approve,
+                    expected_pid=args.expect_pid,
+                    expected_title=args.expect_title,
+                ).to_dict()
+        except DesktopError as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 3
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload.get("ok") else 1
+
+
+    if args.command == "blender":
+        workspace = Path(args.workspace).resolve()
+        try:
+            registry = CapabilityRegistry(workspace)
+            capability_name = (
+                "blender.object.translate_restore_certify"
+                if args.blender_command == "certify-translate-restore"
+                else "blender.object.translate_restore"
+            )
+            intent = IntentEnvelope.from_payload(
+                {
+                    "intent": capability_name,
+                    "target": args.target,
+                    "project": args.project,
+                    "request_id": args.request_id,
+                    "constraints": {
+                        "object": args.object_name,
+                        "delta": [args.dx, args.dy, args.dz],
+                        "approved": args.approve,
+                        "timeout_s": args.timeout,
+                    },
+                }
+            )
+            payload = registry.execute(intent).to_dict()
+        except (CapabilityError, TypeError, ValueError, OSError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 3
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload.get("ok") else 1
+
+    if args.command == "doctor":
+        payload = run_doctor(
+            workspace=args.workspace,
+            repository=args.repo,
+            actor=args.actor,
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ok"] else 1
+
+    if args.command == "projects":
+        try:
+            registry = ProjectRegistry(args.registry)
+            if args.projects_command == "add":
+                if args.position is not None and args.position < 1:
+                    raise ProjectRegistryError("position must be >= 1")
+                entry = registry.add(
+                    args.path,
+                    name=args.name,
+                    group=args.group,
+                    status=args.status,
+                    position=args.position - 1 if args.position is not None else None,
+                )
+                payload = {"ok": True, "project": _project_payload(entry)}
+            elif args.projects_command == "scan":
+                added = registry.scan(args.root, max_depth=args.depth, group=args.group)
+                payload = {
+                    "ok": True,
+                    "added": [_project_payload(item) for item in added],
+                    "projects": [_project_payload(item) for item in registry.entries],
+                }
+            elif args.projects_command == "list":
+                payload = {
+                    "ok": True,
+                    "registry": str(registry.state_file),
+                    "projects": [_project_payload(item) for item in registry.entries],
+                }
+            elif args.projects_command == "move":
+                if args.position < 1:
+                    raise ProjectRegistryError("position must be >= 1")
+                entry = registry.move(args.project, args.position - 1)
+                payload = {
+                    "ok": True,
+                    "project": _project_payload(entry),
+                    "projects": [_project_payload(item) for item in registry.entries],
+                }
+            elif args.projects_command == "remove":
+                entry = registry.remove(args.project)
+                payload = {"ok": True, "removed": _project_payload(entry)}
+            else:
+                refreshed = registry.refresh(args.project)
+                payload = {
+                    "ok": True,
+                    "refreshed": [_project_payload(item) for item in refreshed],
+                }
+        except (ProjectRegistryError, OSError, ValueError) as exc:
+            print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
+            return 3
+
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
 
     if args.command == "exec":
         command = _command_argv(args.argv)

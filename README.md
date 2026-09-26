@@ -64,6 +64,113 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
+## Local-ready quick start
+
+The `release/local-ready` branch is intended for immediate workstation use. It adds a readiness
+diagnostic plus one-command launchers for macOS/Linux and Windows.
+
+macOS / Linux:
+
+```bash
+bash scripts/install-local.sh Blackmvmba88/control /path/to/your/projects
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install-local.ps1 Blackmvmba88/control C:\\path\\to\\projects
+```
+
+The installer creates a local virtual environment, installs WARPBLACK, runs `warpblack doctor`,
+bootstraps the private control repository, and starts `github-watch` in the foreground.
+
+You can run the diagnostic at any time:
+
+```bash
+warpblack doctor --workspace /path/to/your/projects --repo Blackmvmba88/control --actor Blackmvmba88
+```
+
+The watcher remains intentionally foreground-first: closing the terminal stops remote execution.
+That makes the first-use behavior visible and easy to audit before installing it as a background
+service.
+
+## BM-DESKTOP-001 — macOS Desktop Observer
+
+WARPBLACK can now observe and control the local macOS desktop through a narrow command surface.
+
+Read-only observation:
+
+```bash
+warpblack desktop frontmost
+warpblack desktop windows
+warpblack desktop capture --output /tmp/warpblack-screen.png
+```
+
+State-changing UI actions require explicit approval:
+
+```bash
+warpblack desktop activate Blender --approve
+warpblack desktop keystroke s --modifier command --approve
+warpblack desktop click 640 420 --approve
+```
+
+macOS must grant the terminal/Python process the relevant system permissions:
+
+- **Accessibility** for window inspection, activation, clicks, and keystrokes
+- **Screen Recording** for screenshots
+
+The desktop layer intentionally exposes named actions rather than arbitrary AppleScript. The target
+control loop is:
+
+```text
+OBSERVE → PLAN → ACT → CAPTURE → VERIFY
+```
+
+This milestone is the base for application-specific adapters such as Blender and Arduino IDE.
+
+## Project workspace registry
+
+WARPBLACK can act as a project workbench instead of assuming one fixed workspace. Project folders
+stay where they already live on disk; WARPBLACK stores a separate logical catalog at
+`~/.warpblack/projects.json`. That catalog becomes the canonical project order for the UI and for
+future observer/planner routing.
+
+Register one folder:
+
+```bash
+warpblack projects add /path/to/MEngine --group music
+```
+
+Discover projects below a larger folder without moving anything:
+
+```bash
+warpblack projects scan ~/Projects --depth 3
+```
+
+Read the canonical order:
+
+```bash
+warpblack projects list
+```
+
+Move a project to the first logical position:
+
+```bash
+warpblack projects move MEngine 1
+```
+
+Refresh metadata or mark missing folders:
+
+```bash
+warpblack projects refresh
+```
+
+The registry detects common project markers such as `.git`, `pyproject.toml`, `package.json`,
+`Cargo.toml`, `go.mod`, Maven/Gradle files, and `Makefile`. Duplicate paths are updated rather
+than duplicated. The logical order is intentionally independent from folder names and filesystem
+layout, so an eventual desktop UI can present the real BlackMamba project hierarchy without forcing
+a disk reorganization.
+
 ## Local execution
 
 Read-only command:
@@ -327,6 +434,9 @@ The current feature branch adds the conversational-to-repository bridge:
 ## Next
 
 The next high-value layers are:
+
+- desktop project navigator built on the canonical registry (folder picker, cards/tree, drag reorder)
+- active-project selection so observer/construct jobs resolve a registered project instead of a raw path
 
 - repository-aware READ/PLAN helpers
 - deterministic test/diff/certification manifests
