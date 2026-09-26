@@ -128,6 +128,95 @@ OBSERVE → PLAN → ACT → CAPTURE → VERIFY
 
 This milestone is the base for application-specific adapters such as Blender and Arduino IDE.
 
+## BM-DESKTOP-003 — Semantic UI Agent
+
+WARPBLACK can now inspect the macOS Accessibility tree for the focused window and target
+actionable controls by their human-readable label instead of hard-coded pixel coordinates.
+
+Inspect the focused UI:
+
+```bash
+warpblack desktop elements
+```
+
+Click a uniquely matched control:
+
+```bash
+warpblack desktop click-label "Render" --exact --approve
+```
+
+Optionally require a visible screen change after the click:
+
+```bash
+warpblack desktop click-label "Render" --exact --verify-change --approve
+```
+
+The semantic click remains fail-closed:
+
+- mutations still require explicit `--approve`
+- the focused PID/title can be pinned before observation and action
+- only actionable Accessibility roles are considered by default
+- ambiguous labels are rejected instead of guessing
+- the click uses the matched element's current geometry, not stored coordinates
+- optional screenshot SHA-256 comparison provides a first visual read-back signal
+
+This establishes the deterministic half of the agent loop:
+
+```text
+OBSERVE UI → RESOLVE LABEL → ACT → READ BACK → VERIFY
+```
+
+Computer vision can now be added as a fallback for unlabeled canvas controls without weakening
+the semantic/accessibility path.
+
+## BM-DESKTOP-004 — Stale-safe Visual Agent
+
+When a control is not exposed through macOS Accessibility, WARPBLACK can fall back to a visual
+planner without turning raw screen coordinates into an unbounded action surface.
+
+Create the exact screenshot that the planner will inspect:
+
+```bash
+warpblack desktop visual-snapshot --output /tmp/warpblack-plan.png
+```
+
+The result includes the image path, pixel dimensions, focused-window identity, and SHA-256 digest.
+After a vision model or human selects a bounding box, execute it only against that exact snapshot:
+
+```bash
+warpblack desktop click-box 100 50 80 30 \
+  --snapshot-sha <sha256-from-visual-snapshot> \
+  --confidence 0.97 \
+  --label "Render icon" \
+  --approve
+```
+
+Before clicking, WARPBLACK immediately captures the screen again and requires the SHA-256 to still
+match the planner snapshot. If anything changed between observe and act, the action fails closed.
+The visual executor also rejects out-of-bounds boxes, malformed hashes, non-finite values, and
+detections below the configured confidence threshold.
+
+Optional read-back:
+
+```bash
+warpblack desktop click-box 100 50 80 30 \
+  --snapshot-sha <sha256> \
+  --confidence 0.97 \
+  --verify-change \
+  --approve
+```
+
+The combined target resolver is now:
+
+```text
+Accessibility label ───────────────┐
+                                   ├→ bounded click → read back → certify
+exact screenshot + visual box ─────┘
+```
+
+The semantic path remains preferred. Visual coordinates are a bounded fallback and must always be
+bound to the image that produced them.
+
 ## Project workspace registry
 
 WARPBLACK can act as a project workbench instead of assuming one fixed workspace. Project folders

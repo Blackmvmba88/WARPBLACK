@@ -13,6 +13,8 @@ from .contracts import IntentEnvelope
 from .client import WarpClient, WarpClientError
 from .construct import PatchConstructor
 from .doctor import run_doctor
+from .desktop_agent import click_label, inspect_ui
+from .desktop_visual import click_visual_box, visual_snapshot
 from .desktop import (
     DesktopError,
     activate_application,
@@ -145,10 +147,23 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_sub.add_parser("frontmost", help="Read the frontmost application")
     desktop_sub.add_parser("focused-window", help="Read PID and title of the focused window")
     desktop_sub.add_parser("windows", help="List visible application windows")
+    desktop_elements = desktop_sub.add_parser(
+        "elements",
+        help="Inspect actionable UI geometry in the focused window",
+    )
+    desktop_elements.add_argument("--expect-pid", type=int)
+    desktop_elements.add_argument("--expect-title")
     desktop_capture = desktop_sub.add_parser("capture", help="Capture the current screen")
     desktop_capture.add_argument("--output", help="Optional PNG output path")
     desktop_capture.add_argument("--expect-pid", type=int)
     desktop_capture.add_argument("--expect-title")
+    desktop_visual = desktop_sub.add_parser(
+        "visual-snapshot",
+        help="Capture a planner-ready screenshot with dimensions and SHA-256",
+    )
+    desktop_visual.add_argument("--output")
+    desktop_visual.add_argument("--expect-pid", type=int)
+    desktop_visual.add_argument("--expect-title")
     desktop_activate = desktop_sub.add_parser("activate", help="Bring an application to the front")
     desktop_activate.add_argument("application")
     desktop_activate.add_argument("--approve", action="store_true")
@@ -164,6 +179,35 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_click.add_argument("--approve", action="store_true")
     desktop_click.add_argument("--expect-pid", type=int)
     desktop_click.add_argument("--expect-title")
+    desktop_click_label = desktop_sub.add_parser(
+        "click-label",
+        help="Find an actionable UI element by label and click its center",
+    )
+    desktop_click_label.add_argument("label")
+    desktop_click_label.add_argument("--exact", action="store_true")
+    desktop_click_label.add_argument("--role", action="append", default=[])
+    desktop_click_label.add_argument("--verify-change", action="store_true")
+    desktop_click_label.add_argument("--settle", type=float, default=0.15)
+    desktop_click_label.add_argument("--approve", action="store_true")
+    desktop_click_label.add_argument("--expect-pid", type=int)
+    desktop_click_label.add_argument("--expect-title")
+    desktop_click_box = desktop_sub.add_parser(
+        "click-box",
+        help="Click a visual detector box tied to an exact screenshot SHA-256",
+    )
+    desktop_click_box.add_argument("x", type=int)
+    desktop_click_box.add_argument("y", type=int)
+    desktop_click_box.add_argument("width", type=int)
+    desktop_click_box.add_argument("height", type=int)
+    desktop_click_box.add_argument("--snapshot-sha", required=True)
+    desktop_click_box.add_argument("--confidence", required=True, type=float)
+    desktop_click_box.add_argument("--label")
+    desktop_click_box.add_argument("--min-confidence", type=float, default=0.65)
+    desktop_click_box.add_argument("--verify-change", action="store_true")
+    desktop_click_box.add_argument("--settle", type=float, default=0.15)
+    desktop_click_box.add_argument("--approve", action="store_true")
+    desktop_click_box.add_argument("--expect-pid", type=int)
+    desktop_click_box.add_argument("--expect-title")
 
 
     blender = sub.add_parser("blender", help="Run bounded structured Blender capabilities")
@@ -314,8 +358,19 @@ def main(argv: list[str] | None = None) -> int:
                 payload = focused_window().to_dict()
             elif args.desktop_command == "windows":
                 payload = list_windows().to_dict()
+            elif args.desktop_command == "elements":
+                payload = inspect_ui(
+                    expected_pid=args.expect_pid,
+                    expected_title=args.expect_title,
+                ).to_dict()
             elif args.desktop_command == "capture":
                 payload = capture_screen(
+                    args.output,
+                    expected_pid=args.expect_pid,
+                    expected_title=args.expect_title,
+                ).to_dict()
+            elif args.desktop_command == "visual-snapshot":
+                payload = visual_snapshot(
                     args.output,
                     expected_pid=args.expect_pid,
                     expected_title=args.expect_title,
@@ -330,11 +385,38 @@ def main(argv: list[str] | None = None) -> int:
                     expected_pid=args.expect_pid,
                     expected_title=args.expect_title,
                 ).to_dict()
-            else:
+            elif args.desktop_command == "click":
                 payload = click_at(
                     args.x,
                     args.y,
                     approved=args.approve,
+                    expected_pid=args.expect_pid,
+                    expected_title=args.expect_title,
+                ).to_dict()
+            elif args.desktop_command == "click-label":
+                payload = click_label(
+                    args.label,
+                    exact=args.exact,
+                    roles=args.role,
+                    approved=args.approve,
+                    verify_change=args.verify_change,
+                    settle_s=args.settle,
+                    expected_pid=args.expect_pid,
+                    expected_title=args.expect_title,
+                ).to_dict()
+            else:
+                payload = click_visual_box(
+                    args.x,
+                    args.y,
+                    args.width,
+                    args.height,
+                    snapshot_sha256=args.snapshot_sha,
+                    confidence=args.confidence,
+                    label=args.label,
+                    min_confidence=args.min_confidence,
+                    approved=args.approve,
+                    verify_change=args.verify_change,
+                    settle_s=args.settle,
                     expected_pid=args.expect_pid,
                     expected_title=args.expect_title,
                 ).to_dict()
