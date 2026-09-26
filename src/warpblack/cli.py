@@ -10,6 +10,7 @@ import sys
 from .audit import AuditLedger
 from .client import WarpClient, WarpClientError
 from .construct import PatchConstructor
+from .doctor import run_doctor
 from .executor import TerminalExecutor
 from .github_queue import GitHubControlPlane, GitHubQueueError, token_from_env
 from .models import CommandRequest
@@ -122,6 +123,11 @@ def build_parser() -> argparse.ArgumentParser:
     capabilities = sub.add_parser("capabilities", help="Read authenticated bridge capabilities")
     capabilities.add_argument("--url", default=DEFAULT_URL)
 
+    doctor = sub.add_parser("doctor", help="Check whether this machine is ready to run WARPBLACK")
+    doctor.add_argument("--workspace", default=".", help="Workspace root to validate")
+    doctor.add_argument("--repo", help="Optional private control repo as owner/name")
+    doctor.add_argument("--actor", help="Optional allowlisted GitHub actor")
+
     github_bootstrap = sub.add_parser(
         "github-bootstrap",
         help="Verify private control repo and create required labels",
@@ -221,6 +227,15 @@ def _github_control(args: argparse.Namespace) -> GitHubControlPlane:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    if args.command == "doctor":
+        payload = run_doctor(
+            workspace=args.workspace,
+            repository=args.repo,
+            actor=args.actor,
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0 if payload["ok"] else 1
 
     if args.command == "projects":
         try:

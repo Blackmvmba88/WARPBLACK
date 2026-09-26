@@ -64,6 +64,36 @@ source .venv/bin/activate
 pip install -e '.[dev]'
 ```
 
+## Local-ready quick start
+
+The `release/local-ready` branch is intended for immediate workstation use. It adds a readiness
+diagnostic plus one-command launchers for macOS/Linux and Windows.
+
+macOS / Linux:
+
+```bash
+bash scripts/install-local.sh Blackmvmba88/control /path/to/your/projects
+```
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install-local.ps1 Blackmvmba88/control C:\\path\\to\\projects
+```
+
+The installer creates a local virtual environment, installs WARPBLACK, runs `warpblack doctor`,
+bootstraps the private control repository, and starts `github-watch` in the foreground.
+
+You can run the diagnostic at any time:
+
+```bash
+warpblack doctor --workspace /path/to/your/projects --repo Blackmvmba88/control --actor Blackmvmba88
+```
+
+The watcher remains intentionally foreground-first: closing the terminal stops remote execution.
+That makes the first-use behavior visible and easy to audit before installing it as a background
+service.
+
 ## Project workspace registry
 
 WARPBLACK can act as a project workbench instead of assuming one fixed workspace. Project folders
