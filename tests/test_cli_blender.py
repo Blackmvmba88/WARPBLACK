@@ -87,3 +87,33 @@ def test_blender_translate_restore_cli_preserves_missing_approval(
 
     assert code == 0
     assert _FakeRegistry.last_intent.constraints["approved"] is False
+
+
+def test_blender_certify_cli_selects_certificate_capability(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(cli, "CapabilityRegistry", _FakeRegistry)
+
+    code = cli.main(
+        [
+            "blender",
+            "certify-translate-restore",
+            "COMBI_TOPOLOGIA_PRO.blend",
+            "--workspace",
+            str(tmp_path),
+            "--object",
+            "Mirror_L",
+            "--dx",
+            "0.01",
+            "--approve",
+            "--request-id",
+            "bm-blender-002-mirror-l-10mm",
+        ]
+    )
+
+    assert code == 0
+    assert (
+        _FakeRegistry.last_intent.intent
+        == "blender.object.translate_restore_certify"
+    )
+    assert _FakeRegistry.last_intent.constraints["approved"] is True

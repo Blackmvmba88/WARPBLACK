@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .blender import BlenderError, translate_restore
+from .blender_certificate import BlenderCertificateError, certify_translate_restore
 from .contracts import Capability, ExecutionPlan, IntentEnvelope, ResultEnvelope
 from .executor import TerminalExecutor
 from .models import CommandRequest
@@ -51,6 +52,13 @@ class CapabilityRegistry:
                 mutates=False,
                 requires_approval=True,
             ),
+            "blender.object.translate_restore_certify": Capability(
+                name="blender.object.translate_restore_certify",
+                description="Certify a bounded Blender move with visual, window, transform, and hash evidence",
+                risk="elevated",
+                mutates=False,
+                requires_approval=True,
+            ),
         }
 
     def describe(self) -> tuple[Capability, ...]:
@@ -74,7 +82,7 @@ class CapabilityRegistry:
                 "run git status --short --branch through the safety policy",
                 "return branch and working-tree evidence",
             )
-        else:
+        elif capability.name == "blender.object.translate_restore":
             steps = (
                 "resolve .blend target inside configured workspace",
                 "validate explicit approval, object name, and bounded XYZ delta",
@@ -82,6 +90,15 @@ class CapabilityRegistry:
                 "record before and after locations",
                 "restore the exact original location and verify restoration",
                 "return structured evidence without saving the .blend file",
+            )
+        else:
+            steps = (
+                "resolve .blend target inside configured workspace",
+                "verify Blender is the focused application and bind PID/title identity",
+                "capture desktop identity evidence",
+                "generate BEFORE, AFTER, and RESTORED Blender proof renders",
+                "verify transform restoration and unchanged source SHA-256",
+                "write certificate.json and certificate.sha256 inside workspace evidence",
             )
 
         return ExecutionPlan(
@@ -102,6 +119,8 @@ class CapabilityRegistry:
             return self._git_status(intent, plan)
         if intent.intent == "blender.object.translate_restore":
             return self._blender_translate_restore(intent, plan)
+        if intent.intent == "blender.object.translate_restore_certify":
+            return self._blender_translate_restore_certify(intent, plan)
         raise CapabilityError(f"unimplemented intent: {intent.intent}")
 
     def _resolve_target(self, raw: str) -> Path:
@@ -210,6 +229,47 @@ class CapabilityRegistry:
             project=intent.project,
             changed=False,
             summary=f"verified and restored Blender object {evidence['object']}",
+            evidence=evidence,
+            plan=plan,
+        )
+
+    def _blender_translate_restore_certify(
+        self,
+        intent: IntentEnvelope,
+        plan: ExecutionPlan,
+    ) -> ResultEnvelope:
+        target = self._resolve_target(intent.target)
+        if not target.is_file() or target.suffix.lower() != ".blend":
+            raise CapabilityError("blender target must be an existing .blend file")
+
+        object_name = intent.constraints.get("object")
+        delta = intent.constraints.get("delta")
+        approved = intent.constraints.get("approved") is True
+        timeout_raw = intent.constraints.get("timeout_s", 120.0)
+        if isinstance(timeout_raw, bool) or not isinstance(timeout_raw, (int, float)):
+            raise CapabilityError("timeout_s must be a number")
+
+        try:
+            certificate = certify_translate_restore(
+                target,
+                workspace_root=self.workspace_root,
+                request_id=intent.request_id,
+                object_name=object_name if isinstance(object_name, str) else "",
+                delta=delta,
+                approved=approved,
+                timeout_s=float(timeout_raw),
+            )
+        except (BlenderCertificateError, BlenderError) as exc:
+            raise CapabilityError(str(exc)) from exc
+
+        evidence = certificate.to_dict()
+        return ResultEnvelope(
+            request_id=intent.request_id,
+            status="success",
+            capability=intent.intent,
+            project=intent.project,
+            changed=False,
+            summary=f"certified and restored Blender object {object_name}",
             evidence=evidence,
             plan=plan,
         )

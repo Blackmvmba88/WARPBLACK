@@ -187,6 +187,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicitly approve the bounded Blender transaction",
     )
 
+    blender_certify = blender_sub.add_parser(
+        "certify-translate-restore",
+        help="Create BM-BLENDER-002 visual and cryptographic evidence",
+    )
+    blender_certify.add_argument("target", help="Workspace-relative .blend path")
+    blender_certify.add_argument("--workspace", default=".", help="Allowed workspace root")
+    blender_certify.add_argument("--object", required=True, dest="object_name")
+    blender_certify.add_argument("--dx", type=float, default=0.0)
+    blender_certify.add_argument("--dy", type=float, default=0.0)
+    blender_certify.add_argument("--dz", type=float, default=0.0)
+    blender_certify.add_argument("--timeout", type=float, default=120.0)
+    blender_certify.add_argument("--request-id")
+    blender_certify.add_argument("--project")
+    blender_certify.add_argument(
+        "--approve",
+        action="store_true",
+        help="Explicitly approve the certified Blender transaction",
+    )
+
     github_bootstrap = sub.add_parser(
         "github-bootstrap",
         help="Verify private control repo and create required labels",
@@ -330,9 +349,14 @@ def main(argv: list[str] | None = None) -> int:
         workspace = Path(args.workspace).resolve()
         try:
             registry = CapabilityRegistry(workspace)
+            capability_name = (
+                "blender.object.translate_restore_certify"
+                if args.blender_command == "certify-translate-restore"
+                else "blender.object.translate_restore"
+            )
             intent = IntentEnvelope.from_payload(
                 {
-                    "intent": "blender.object.translate_restore",
+                    "intent": capability_name,
                     "target": args.target,
                     "project": args.project,
                     "request_id": args.request_id,
