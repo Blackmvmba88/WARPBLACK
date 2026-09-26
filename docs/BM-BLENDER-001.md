@@ -19,7 +19,23 @@ Prove that WARPBLACK can perform one bounded Blender operation against a real `.
 - SHA-256 is computed before and after execution; any source-file change fails closed.
 - Success requires exact restoration verification.
 
-## Real-machine acceptance payload
+## Real-machine acceptance command
+
+On the Mac with Blender installed and the scene inside the configured workspace:
+
+```bash
+warpblack blender translate-restore COMBI_TOPOLOGIA_PRO.blend \
+  --workspace . \
+  --object Mirror_L \
+  --dx 0.01 \
+  --approve \
+  --request-id bm-blender-001-mirror-l-10mm \
+  --project COMBI
+```
+
+This CLI command is only a friendly adapter; internally it builds the same structured intent below.
+
+## Equivalent structured intent
 
 Use the normal structured-intent entrypoint with a payload equivalent to:
 
