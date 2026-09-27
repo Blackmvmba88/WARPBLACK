@@ -8,6 +8,9 @@ import subprocess
 import tempfile
 from typing import Sequence
 
+from .executor import TerminalExecutor
+from .models import CommandRequest
+
 
 class DesktopError(RuntimeError):
     pass
@@ -28,14 +31,37 @@ def _require_macos() -> None:
         raise DesktopError("BM-DESKTOP currently supports macOS only")
 
 
-def _run_osascript(lines: Sequence[str], *, timeout_s: float = 10.0) -> str:
-    _require_macos()
-    argv: list[str] = ["osascript"]
-    for line in lines:
-        argv.extend(["-e", line])
+def _run_command(
+    argv: Sequence[str],
+    *,
+    timeout_s: float,
+    failure_message: str,
+    executor: TerminalExecutor | None = None,
+    request_id: str | None = None,
+) -> str:
+    if executor is not None:
+        result = executor.execute(
+            CommandRequest.from_parts(
+                argv,
+                executor.workspace_root,
+                timeout_s=timeout_s,
+                # The typed desktop capability fixes the executable and arguments.
+                # Approval here is capability-internal so TerminalExecutor applies
+                # policy and writes the audit record without exposing shell input.
+                approved=True,
+                request_id=request_id,
+            )
+        )
+        if result.timed_out:
+            raise DesktopError("desktop action timed out")
+        if result.exit_code != 0:
+            message = (result.stderr or result.stdout or failure_message).strip()
+            raise DesktopError(message)
+        return result.stdout.strip()
+
     try:
         completed = subprocess.run(
-            argv,
+            list(argv),
             capture_output=True,
             text=True,
             timeout=timeout_s,
@@ -45,9 +71,29 @@ def _run_osascript(lines: Sequence[str], *, timeout_s: float = 10.0) -> str:
     except subprocess.TimeoutExpired as exc:
         raise DesktopError("desktop action timed out") from exc
     if completed.returncode != 0:
-        message = (completed.stderr or completed.stdout or "osascript failed").strip()
+        message = (completed.stderr or completed.stdout or failure_message).strip()
         raise DesktopError(message)
     return completed.stdout.strip()
+
+
+def _run_osascript(
+    lines: Sequence[str],
+    *,
+    timeout_s: float = 10.0,
+    executor: TerminalExecutor | None = None,
+    request_id: str | None = None,
+) -> str:
+    _require_macos()
+    argv: list[str] = ["osascript"]
+    for line in lines:
+        argv.extend(["-e", line])
+    return _run_command(
+        argv,
+        timeout_s=timeout_s,
+        failure_message="osascript failed",
+        executor=executor,
+        request_id=request_id,
+    )
 
 
 def _parse_window_row(raw: str) -> dict[str, object]:
@@ -67,8 +113,12 @@ def _parse_window_row(raw: str) -> dict[str, object]:
     }
 
 
-def frontmost_application() -> DesktopResult:
-    identity = focused_window().data
+def frontmost_application(
+    *,
+    executor: TerminalExecutor | None = None,
+    request_id: str | None = None,
+) -> DesktopResult:
+    identity = focused_window(executor=executor, request_id=request_id).data
     return DesktopResult(
         True,
         "frontmost",
@@ -80,7 +130,11 @@ def frontmost_application() -> DesktopResult:
     )
 
 
-def focused_window() -> DesktopResult:
+def focused_window(
+    *,
+    executor: TerminalExecutor | None = None,
+    request_id: str | None = None,
+) -> DesktopResult:
     raw = _run_osascript([
         'tell application "System Events"',
         'set matches to application processes whose frontmost is true',
@@ -92,11 +146,15 @@ def focused_window() -> DesktopResult:
         'if (count of windows of p) > 0 then set windowTitle to name of front window of p as text',
         'return appName & tab & (appPid as text) & tab & "true" & tab & windowTitle',
         'end tell',
-    ])
+    ], executor=executor, request_id=request_id)
     return DesktopResult(True, "focused-window", _parse_window_row(raw))
 
 
-def list_windows() -> DesktopResult:
+def list_windows(
+    *,
+    executor: TerminalExecutor | None = None,
+    request_id: str | None = None,
+) -> DesktopResult:
     raw = _run_osascript([
         'tell application "System Events"',
         'set output to {}',
@@ -116,7 +174,7 @@ def list_windows() -> DesktopResult:
         'set AppleScript\'s text item delimiters to previousDelimiters',
         'return payload',
         'end tell',
-    ])
+    ], executor=executor, request_id=request_id)
     windows: list[dict[str, object]] = []
     if raw:
         windows = [_parse_window_row(row) for row in raw.splitlines() if row.strip()]
@@ -127,8 +185,10 @@ def _assert_focused_window(
     *,
     expected_pid: int | None = None,
     expected_title: str | None = None,
+    executor: TerminalExecutor | None = None,
+    request_id: str | None = None,
 ) -> dict[str, object]:
-    current = focused_window().data
+    current = focused_window(executor=executor, request_id=request_id).data
     if expected_pid is not None and current["pid"] != expected_pid:
         raise DesktopError(
             f"focused window PID mismatch: expected {expected_pid}, got {current['pid']}"
@@ -239,11 +299,15 @@ def capture_screen(
     *,
     expected_pid: int | None = None,
     expected_title: str | None = None,
+    executor: TerminalExecutor | None = None,
+    request_id: str | None = None,
 ) -> DesktopResult:
     _require_macos()
     focused = _assert_focused_window(
         expected_pid=expected_pid,
         expected_title=expected_title,
+        executor=executor,
+        request_id=request_id,
     )
     if output is None:
         target = Path(tempfile.gettempdir()) / "warpblack-desktop.png"
@@ -251,17 +315,13 @@ def capture_screen(
         target = Path(output).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    completed = subprocess.run(
+    _run_command(
         ["screencapture", "-x", str(target)],
-        capture_output=True,
-        text=True,
-        timeout=15,
-        check=False,
-        shell=False,
+        timeout_s=15.0,
+        failure_message="screencapture failed",
+        executor=executor,
+        request_id=request_id,
     )
-    if completed.returncode != 0:
-        message = (completed.stderr or completed.stdout or "screencapture failed").strip()
-        raise DesktopError(message)
     return DesktopResult(
         True,
         "capture",
