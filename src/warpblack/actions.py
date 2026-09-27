@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from .capabilities import CapabilityRegistry
+from .capabilities import CapabilityError, CapabilityRegistry
 from .contracts import IntentEnvelope
 from .desktop import capture_screen, focused_window, frontmost_application, list_windows
 
@@ -95,7 +95,13 @@ def dispatch_action(
                 "constraints": {},
             }
         )
+        try:
+            try:
         return registry.execute(intent).to_dict()
+    except CapabilityError as exc:
+        raise ActionError(str(exc)) from exc
+        except CapabilityError as exc:
+            raise ActionError(str(exc)) from exc
 
     _reject_unknown_args(
         action,
