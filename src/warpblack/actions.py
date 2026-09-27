@@ -6,7 +6,8 @@ from typing import Any
 
 from .capabilities import CapabilityError, CapabilityRegistry
 from .contracts import IntentEnvelope
-from .desktop import capture_screen, focused_window, frontmost_application, list_windows
+from .desktop import DesktopError, capture_screen, focused_window, frontmost_application, list_windows
+from .executor import TerminalExecutor
 
 
 ACTION_PROTOCOL = "warpblack-action-v1"
@@ -68,31 +69,35 @@ def dispatch_action(
     workspace_root: str | Path,
     approved: bool = False,
     request_id: str | None = None,
+    executor: TerminalExecutor | None = None,
 ) -> dict[str, object]:
     if action not in SUPPORTED_ACTIONS:
         raise ActionError(f"unsupported action: {action}")
 
     values: Mapping[str, Any] = args or {}
 
-    if action == "desktop.frontmost":
-        _reject_unknown_args(action, values, set())
-        return frontmost_application().to_dict()
+    try:
+        if action == "desktop.frontmost":
+            _reject_unknown_args(action, values, set())
+            return frontmost_application().to_dict()
 
-    if action == "desktop.windows":
-        _reject_unknown_args(action, values, set())
-        return list_windows().to_dict()
+        if action == "desktop.windows":
+            _reject_unknown_args(action, values, set())
+            return list_windows().to_dict()
 
-    if action == "desktop.focused_window":
-        _reject_unknown_args(action, values, set())
-        return focused_window().to_dict()
+        if action == "desktop.focused_window":
+            _reject_unknown_args(action, values, set())
+            return focused_window().to_dict()
 
-    if action == "desktop.capture":
-        # Remote jobs intentionally use WARPBLACK's managed temporary output.
-        # A remote caller cannot choose an arbitrary filesystem path.
-        _reject_unknown_args(action, values, set())
-        return capture_screen().to_dict()
+        if action == "desktop.capture":
+            # Remote jobs intentionally use WARPBLACK's managed temporary output.
+            # A remote caller cannot choose an arbitrary filesystem path.
+            _reject_unknown_args(action, values, set())
+            return capture_screen().to_dict()
+    except DesktopError as exc:
+        raise ActionError(str(exc)) from exc
 
-    registry = CapabilityRegistry(workspace_root)
+    registry = CapabilityRegistry(workspace_root, executor=executor)
 
     if action in {"files.read", "git.status"}:
         _reject_unknown_args(action, values, {"target", "project"})
