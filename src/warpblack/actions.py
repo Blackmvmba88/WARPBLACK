@@ -51,6 +51,16 @@ def _project_arg(args: Mapping[str, Any]) -> str | None:
     return value
 
 
+def _execute_capability(
+    registry: CapabilityRegistry,
+    intent: IntentEnvelope,
+) -> dict[str, object]:
+    try:
+        return registry.execute(intent).to_dict()
+    except CapabilityError as exc:
+        raise ActionError(str(exc)) from exc
+
+
 def dispatch_action(
     action: str,
     args: Mapping[str, Any] | None = None,
@@ -95,13 +105,7 @@ def dispatch_action(
                 "constraints": {},
             }
         )
-        try:
-            try:
-        return registry.execute(intent).to_dict()
-    except CapabilityError as exc:
-        raise ActionError(str(exc)) from exc
-        except CapabilityError as exc:
-            raise ActionError(str(exc)) from exc
+        return _execute_capability(registry, intent)
 
     _reject_unknown_args(
         action,
@@ -111,22 +115,18 @@ def dispatch_action(
     if not approved:
         raise ActionError(f"{action} requires the separate remote approval label")
 
-    target = _string_arg(values, "target")
-    object_name = _string_arg(values, "object")
-    delta = values.get("delta")
-    timeout_s = values.get("timeout_s", 120.0)
     intent = IntentEnvelope.from_payload(
         {
             "intent": action,
-            "target": target,
+            "target": _string_arg(values, "target"),
             "project": _project_arg(values),
             "request_id": request_id,
             "constraints": {
-                "object": object_name,
-                "delta": delta,
-                "timeout_s": timeout_s,
+                "object": _string_arg(values, "object"),
+                "delta": values.get("delta"),
+                "timeout_s": values.get("timeout_s", 120.0),
                 "approved": True,
             },
         }
     )
-    return registry.execute(intent).to_dict()
+    return _execute_capability(registry, intent)
