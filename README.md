@@ -448,7 +448,25 @@ A job is an issue carrying the `warpblack-job` label whose body contains only JS
 }
 ```
 
-The queue accepts three protocol envelopes under the same `warpblack-job` label:
+The queue accepts four protocol envelopes under the same `warpblack-job` label.
+
+**Typed action (preferred for automation)**:
+
+```json
+{
+  "protocol": "warpblack-action-v1",
+  "action": "git.status",
+  "args": {
+    "target": "."
+  }
+}
+```
+
+Typed actions are allowlisted and schema-checked. They do not expose arbitrary shell strings.
+Current actions include desktop observation/capture, `files.read`, `git.status`, and the bounded
+Blender translate/restore capabilities. Blender actions require the separate
+`warpblack-approved` label; an `"approved": true` field inside job JSON has no authority.
+
 
 **Absorb context** (no elevated approval required):
 
