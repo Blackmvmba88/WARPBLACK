@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+import subprocess
 from typing import Any
 
 from .capabilities import CapabilityError, CapabilityRegistry
@@ -60,6 +61,8 @@ def _execute_capability(
         return registry.execute(intent).to_dict()
     except CapabilityError as exc:
         raise ActionError(str(exc)) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ActionError("capability execution timed out") from exc
 
 
 def dispatch_action(
@@ -75,25 +78,28 @@ def dispatch_action(
         raise ActionError(f"unsupported action: {action}")
 
     values: Mapping[str, Any] = args or {}
+    desktop_kwargs: dict[str, Any] = {}
+    if executor is not None:
+        desktop_kwargs = {"executor": executor, "request_id": request_id}
 
     try:
         if action == "desktop.frontmost":
             _reject_unknown_args(action, values, set())
-            return frontmost_application().to_dict()
+            return frontmost_application(**desktop_kwargs).to_dict()
 
         if action == "desktop.windows":
             _reject_unknown_args(action, values, set())
-            return list_windows().to_dict()
+            return list_windows(**desktop_kwargs).to_dict()
 
         if action == "desktop.focused_window":
             _reject_unknown_args(action, values, set())
-            return focused_window().to_dict()
+            return focused_window(**desktop_kwargs).to_dict()
 
         if action == "desktop.capture":
             # Remote jobs intentionally use WARPBLACK's managed temporary output.
             # A remote caller cannot choose an arbitrary filesystem path.
             _reject_unknown_args(action, values, set())
-            return capture_screen().to_dict()
+            return capture_screen(**desktop_kwargs).to_dict()
     except DesktopError as exc:
         raise ActionError(str(exc)) from exc
 
