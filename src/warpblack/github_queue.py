@@ -11,8 +11,10 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from .actions import ACTION_PROTOCOL, ActionError, dispatch_action
 from .audit import AuditLedger
 from .construct import PatchConstructor
+from .desktop import DesktopError
 from .executor import TerminalExecutor
 from .models import CommandRequest
 from .policy import PolicyError
@@ -29,6 +31,15 @@ MAX_REMOTE_STREAM_CHARS = 12_000
 
 class GitHubQueueError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class GitHubActionJob:
+    issue_number: int
+    action: str
+    args: dict[str, Any]
+    approved: bool
+    actor: str
 
 
 @dataclass(frozen=True)
@@ -65,7 +76,17 @@ class GitHubConstructJob:
     actor: str
 
 
-GitHubJob: TypeAlias = GitHubCommandJob | GitHubAbsorbJob | GitHubConstructJob
+GitHubJob: TypeAlias = GitHubActionJob | GitHubCommandJob | GitHubAbsorbJob | GitHubConstructJob
+
+
+def _job_type(job: GitHubJob) -> str:
+    if isinstance(job, GitHubActionJob):
+        return "action"
+    if isinstance(job, GitHubConstructJob):
+        return "construct"
+    if isinstance(job, GitHubAbsorbJob):
+        return "absorb"
+    return "command"
 
 
 class GitHubControlPlane:
@@ -193,7 +214,12 @@ class GitHubControlPlane:
     def _execute_job(self, job: GitHubJob) -> None:
         request_id = f"github:{self.repository}#{job.issue_number}"
         try:
-            if isinstance(job, GitHubAbsorbJob):
+            if isinstance(job, GitHubActionJob):
+                payload = dispatch_action(job.action, job.args, approved=job.approved)
+                payload["request_id"] = request_id
+                payload["job_type"] = "action"
+                payload["requested_action"] = job.action
+            elif isinstance(job, GitHubAbsorbJob):
                 result = self.absorber.ingest(
                     message=job.message,
                     project_name=job.project_name,
@@ -239,17 +265,20 @@ class GitHubControlPlane:
                 payload["job_type"] = "command"
                 self._bound_stream(payload, "stdout")
                 self._bound_stream(payload, "stderr")
-        except (PolicyError, FileNotFoundError, FileExistsError, PermissionError, OSError, ValueError) as exc:
+        except (
+            ActionError,
+            DesktopError,
+            PolicyError,
+            FileNotFoundError,
+            FileExistsError,
+            PermissionError,
+            OSError,
+            ValueError,
+        ) as exc:
             payload = {
                 "ok": False,
                 "request_id": request_id,
-                "job_type": (
-                    "construct"
-                    if isinstance(job, GitHubConstructJob)
-                    else "absorb"
-                    if isinstance(job, GitHubAbsorbJob)
-                    else "command"
-                ),
+                "job_type": _job_type(job),
                 "error": str(exc),
             }
 
@@ -360,6 +389,21 @@ def parse_issue_job(issue: object, *, allowed_actor: str) -> GitHubJob | None:
     timeout_s = payload.get("timeout_s", 60.0)
     if not isinstance(timeout_s, (int, float)):
         raise GitHubQueueError("timeout_s must be numeric")
+
+    if protocol == ACTION_PROTOCOL:
+        action = payload.get("action")
+        if not isinstance(action, str) or not action.strip():
+            raise GitHubQueueError("action must be a non-empty string")
+        raw_args = payload.get("args", {})
+        if not isinstance(raw_args, dict):
+            raise GitHubQueueError("action args must be a JSON object")
+        return GitHubActionJob(
+            issue_number=issue_number,
+            action=action.strip(),
+            args=dict(raw_args),
+            approved=approved,
+            actor=allowed_actor,
+        )
 
     if protocol == JOB_PROTOCOL:
         argv = payload.get("argv")
