@@ -26,6 +26,7 @@ CONSTRUCT_PROTOCOL = "warpblack-construct-v1"
 JOB_LABEL = "warpblack-job"
 APPROVAL_LABEL = "warpblack-approved"
 MAX_REMOTE_STREAM_CHARS = 12_000
+MAX_REMOTE_PAYLOAD_CHARS = 50_000
 
 
 class GitHubQueueError(RuntimeError):
@@ -225,7 +226,6 @@ class GitHubControlPlane:
                 payload["request_id"] = request_id
                 payload["job_type"] = "action"
                 payload["requested_action"] = job.action
-                self._bound_payload_strings(payload)
             elif isinstance(job, GitHubAbsorbJob):
                 result = self.absorber.ingest(
                     message=job.message,
@@ -288,6 +288,8 @@ class GitHubControlPlane:
                 "error": str(exc),
             }
 
+        self._bound_payload_strings(payload)
+        self._bound_payload_total(payload)
         body = "WARPBLACK_RESULT_V1\n```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
         self._request_json(
             "POST",
@@ -314,6 +316,44 @@ class GitHubControlPlane:
         elif isinstance(value, list):
             for item in value:
                 cls._bound_payload_strings(item)
+
+    @classmethod
+    def _bound_payload_total(cls, payload: dict[str, Any]) -> None:
+        serialized = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(serialized) <= MAX_REMOTE_PAYLOAD_CHARS:
+            return
+
+        preserved: dict[str, Any] = {}
+        for key in (
+            "ok",
+            "status",
+            "request_id",
+            "job_type",
+            "requested_action",
+            "capability",
+            "summary",
+            "error",
+        ):
+            value = payload.get(key)
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                preserved[key] = value
+
+        preserved.update(
+            {
+                "payload_truncated": True,
+                "payload_sha256": hashlib.sha256(
+                    serialized.encode("utf-8")
+                ).hexdigest(),
+                "payload_chars": len(serialized),
+                "payload_preview": serialized[:MAX_REMOTE_STREAM_CHARS],
+            }
+        )
+        payload.clear()
+        payload.update(preserved)
 
     @classmethod
     def _bound_construct_streams(cls, payload: dict[str, Any]) -> None:
