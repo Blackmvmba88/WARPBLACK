@@ -227,8 +227,6 @@ def keystroke(
     focused = _assert_focused_window(
         expected_pid=expected_pid,
         expected_title=expected_title,
-        executor=executor,
-        request_id=request_id,
     )
 
     modifier_map = {
@@ -308,6 +306,8 @@ def capture_screen(
     focused = _assert_focused_window(
         expected_pid=expected_pid,
         expected_title=expected_title,
+        executor=executor,
+        request_id=request_id,
     )
     if output is None:
         target = Path(tempfile.gettempdir()) / "warpblack-desktop.png"
