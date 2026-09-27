@@ -220,10 +220,12 @@ class GitHubControlPlane:
                     workspace_root=self.workspace_root,
                     approved=job.approved,
                     request_id=request_id,
+                    executor=self.executor,
                 )
                 payload["request_id"] = request_id
                 payload["job_type"] = "action"
                 payload["requested_action"] = job.action
+                self._bound_payload_strings(payload)
             elif isinstance(job, GitHubAbsorbJob):
                 result = self.absorber.ingest(
                     message=job.message,
@@ -297,6 +299,21 @@ class GitHubControlPlane:
             f"/repos/{self.repository}/issues/{job.issue_number}",
             {"state": "closed"},
         )
+
+    @classmethod
+    def _bound_payload_strings(cls, value: Any) -> None:
+        if isinstance(value, dict):
+            for key in list(value):
+                item = value[key]
+                if isinstance(item, str) and len(item) > MAX_REMOTE_STREAM_CHARS:
+                    value[f"{key}_sha256"] = hashlib.sha256(item.encode("utf-8")).hexdigest()
+                    value[f"{key}_truncated"] = True
+                    value[key] = item[:MAX_REMOTE_STREAM_CHARS]
+                else:
+                    cls._bound_payload_strings(item)
+        elif isinstance(value, list):
+            for item in value:
+                cls._bound_payload_strings(item)
 
     @classmethod
     def _bound_construct_streams(cls, payload: dict[str, Any]) -> None:
