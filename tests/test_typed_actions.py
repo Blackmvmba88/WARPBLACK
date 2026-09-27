@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -248,3 +249,94 @@ def test_control_plane_bounds_nested_typed_action_strings(
     assert '"content_truncated": true' in body
     assert '"stdout_truncated": true' in body
     assert huge not in body
+
+
+def test_remote_desktop_action_receives_audited_executor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_frontmost(*, executor=None, request_id=None) -> DesktopResult:
+        seen["executor"] = executor
+        seen["request_id"] = request_id
+        return DesktopResult(True, "frontmost", {"application": "Terminal"})
+
+    monkeypatch.setattr(actions, "frontmost_application", fake_frontmost)
+    executor = TerminalExecutor(tmp_path)
+
+    result = dispatch_action(
+        "desktop.frontmost",
+        {},
+        workspace_root=tmp_path,
+        request_id="github:owner/private-control#21",
+        executor=executor,
+    )
+
+    assert result["ok"] is True
+    assert seen["executor"] is executor
+    assert seen["request_id"] == "github:owner/private-control#21"
+
+
+def test_capability_timeout_is_normalized_as_action_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_execute(self, intent):
+        raise subprocess.TimeoutExpired(cmd=["blender"], timeout=0.01)
+
+    monkeypatch.setattr(actions.CapabilityRegistry, "execute", fail_execute)
+
+    with pytest.raises(ActionError, match="timed out"):
+        dispatch_action(
+            "git.status",
+            {"target": "."},
+            workspace_root=tmp_path,
+        )
+
+
+def test_control_plane_caps_total_typed_action_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str, object]] = []
+
+    class FakeControlPlane(GitHubControlPlane):
+        def _request_json(self, method, path, payload=None):
+            calls.append((method, path, payload))
+            return {}
+
+    monkeypatch.setattr(
+        github_queue,
+        "dispatch_action",
+        lambda action, args, workspace_root, approved=False, request_id=None, executor=None: {
+            "ok": True,
+            "data": {
+                "windows": [
+                    {"title": "x" * 1_000, "application": "Demo"}
+                    for _ in range(100)
+                ]
+            },
+        },
+    )
+
+    control = FakeControlPlane(
+        token="token",
+        repository="owner/private-control",
+        allowed_actor="Blackmvmba88",
+        workspace_root=tmp_path,
+    )
+    job = GitHubActionJob(
+        issue_number=21,
+        action="desktop.windows",
+        args={},
+        approved=False,
+        actor="Blackmvmba88",
+    )
+
+    control._execute_job(job)
+
+    comment = next(call for call in calls if call[0] == "POST")
+    body = comment[2]["body"]
+    assert '"payload_truncated": true' in body
+    assert len(body) < 30_000
