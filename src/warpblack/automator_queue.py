@@ -41,6 +41,7 @@ class AutomatorJob:
     risk: str
     evidence_targets: tuple[str, ...]
     requires_authorization: bool
+    authorization: dict[str, Any] | None = None
 
     @classmethod
     def from_payload(cls, payload: object) -> "AutomatorJob":
@@ -113,9 +114,9 @@ class AutomatorJob:
 
 
 class AutomatorQueueWorker:
-    """Consume BlackMamba Automator jobs through an allowlisted adapter boundary.
+    """Allowlisted WARPBLACK worker for BlackMamba Automator jobs.
 
-    This worker intentionally has no generic argv/shell execution path.
+    There is deliberately no generic argv/shell field in this protocol.
     """
 
     def __init__(
@@ -133,15 +134,20 @@ class AutomatorQueueWorker:
         self.artifacts = self.root / "artifacts"
         self.workspace_root = Path(workspace_root).expanduser().resolve()
         self.project_registry_file = Path(project_registry_file).expanduser()
-        for path in (self.jobs, self.results, self.processed, self.rejected, self.artifacts):
+        for path in (
+            self.jobs,
+            self.results,
+            self.processed,
+            self.rejected,
+            self.artifacts,
+        ):
             path.mkdir(parents=True, exist_ok=True)
 
     def run_once(self) -> int:
         pending = sorted(self.jobs.glob(f"*{AUTOMATOR_JOB_SUFFIX}"))
         if not pending:
             return 0
-        source = pending[0]
-        self._consume(source)
+        self._consume(pending[0])
         return 1
 
     def watch(self, *, poll_interval_s: float = 2.0) -> None:
@@ -155,11 +161,23 @@ class AutomatorQueueWorker:
         started = _utc_now()
         job: AutomatorJob | None = None
         try:
-            job = AutomatorJob.from_payload(json.loads(path.read_text(encoding="utf-8")))
+            job = AutomatorJob.from_payload(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
             result = self._execute(job, started_at=started)
             destination = self.processed / path.name
-        except (OSError, json.JSONDecodeError, TypeError, ValueError, ProjectRegistryError) as exc:
-            job_id = job.job_id if job is not None else path.name.removesuffix(AUTOMATOR_JOB_SUFFIX)
+        except (
+            OSError,
+            json.JSONDecodeError,
+            TypeError,
+            ValueError,
+            ProjectRegistryError,
+        ) as exc:
+            job_id = (
+                job.job_id
+                if job is not None
+                else path.name.removesuffix(AUTOMATOR_JOB_SUFFIX)
+            )
             idem = job.idempotency_key if job is not None else "unknown"
             result = self._result(
                 job_id=job_id,
@@ -178,8 +196,11 @@ class AutomatorQueueWorker:
             job.authorization
             and job.authorization.get("granted") is True
             and isinstance(job.authorization.get("at"), str)
+            and bool(job.authorization.get("at"))
         )
-        if (job.requires_authorization or job.risk in BLOCKED_RISKS) and not authorization_granted:
+        if (
+            job.requires_authorization or job.risk in BLOCKED_RISKS
+        ) and not authorization_granted:
             return self._result(
                 job_id=job.job_id,
                 idempotency_key=job.idempotency_key,
@@ -191,7 +212,10 @@ class AutomatorQueueWorker:
         if job.adapter == "workspace" and job.intent == "import_project_reference":
             return self._workspace_import(job, started_at=started_at)
 
-        if job.adapter == "distribution-work" and job.intent == "prepare_distribution_bundle":
+        if (
+            job.adapter == "distribution-work"
+            and job.intent == "prepare_distribution_bundle"
+        ):
             return self._prepare_distribution_bundle(job, started_at=started_at)
 
         return self._result(
@@ -199,10 +223,17 @@ class AutomatorQueueWorker:
             idempotency_key=job.idempotency_key,
             status="failed",
             started_at=started_at,
-            errors=[f"unsupported automator adapter/intent: {job.adapter}/{job.intent}"],
+            errors=[
+                f"unsupported automator adapter/intent: {job.adapter}/{job.intent}"
+            ],
         )
 
-    def _workspace_import(self, job: AutomatorJob, *, started_at: str) -> dict[str, Any]:
+    def _workspace_import(
+        self,
+        job: AutomatorJob,
+        *,
+        started_at: str,
+    ) -> dict[str, Any]:
         raw_path = job.inputs.get("path")
         if not isinstance(raw_path, str) or not raw_path.strip():
             raise ValueError("workspace import requires inputs.path")
@@ -220,23 +251,37 @@ class AutomatorQueueWorker:
         for spec in job.validators:
             name = spec["name"]
             if name == "project_reference_exists":
-                ok = project_path.exists() and any(item.id == entry.id for item in registry.entries)
-                detail = f"registry={self.project_registry_file}; project_id={entry.id}"
+                ok = project_path.exists() and any(
+                    item.id == entry.id for item in registry.entries
+                )
+                detail = (
+                    f"registry={self.project_registry_file}; "
+                    f"project_id={entry.id}"
+                )
             else:
                 ok = False
                 detail = f"unsupported validator: {name}"
-            validation.append({"validator": name, "ok": ok, "detail": detail})
+            validation.append(
+                {"validator": name, "ok": ok, "detail": detail}
+            )
 
         if not validation:
             validation.append(
                 {
                     "validator": "project_reference_exists",
                     "ok": True,
-                    "detail": f"registry={self.project_registry_file}; project_id={entry.id}",
+                    "detail": (
+                        f"registry={self.project_registry_file}; "
+                        f"project_id={entry.id}"
+                    ),
                 }
             )
 
-        status = "validated" if all(item["ok"] for item in validation) else "failed"
+        status = (
+            "validated"
+            if all(item["ok"] for item in validation)
+            else "failed"
+        )
         return self._result(
             job_id=job.job_id,
             idempotency_key=job.idempotency_key,
@@ -255,10 +300,117 @@ class AutomatorQueueWorker:
             evidence_links=[str(self.project_registry_file)],
         )
 
+    def _prepare_distribution_bundle(
+        self,
+        job: AutomatorJob,
+        *,
+        started_at: str,
+    ) -> dict[str, Any]:
+        if job.inputs.get("distribution_gate_passed") is not True:
+            raise ValueError(
+                "distribution gate must be passed before bundle preparation"
+            )
+
+        track_id = job.inputs.get("track_id")
+        title = job.inputs.get("title")
+        metadata = job.inputs.get("metadata")
+        assets = job.inputs.get("assets")
+
+        if not isinstance(track_id, str) or not track_id.strip():
+            raise ValueError("distribution request requires track_id")
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError("distribution request requires title")
+        if not isinstance(metadata, dict):
+            raise ValueError("distribution request requires metadata object")
+        if not isinstance(assets, dict):
+            raise ValueError("distribution request requires assets object")
+
+        bundle = {
+            "schema": "blackmamba.distribution.bundle.v1",
+            "preparedAt": _utc_now(),
+            "jobId": job.job_id,
+            "trackId": track_id,
+            "title": title,
+            "metadata": metadata,
+            "assets": assets,
+            "sources": job.inputs.get("sources", {}),
+            "technical": job.inputs.get("technical", {}),
+            "ratings": job.inputs.get("ratings", {}),
+            "authorization": job.authorization,
+            "publicationStatus": "not_published",
+        }
+        artifact = (
+            self.artifacts
+            / f"{job.job_id}.distribution-bundle.json"
+        )
+        temp = artifact.with_suffix(artifact.suffix + ".tmp")
+        temp.write_text(
+            json.dumps(bundle, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        temp.replace(artifact)
+
+        validation: list[dict[str, Any]] = []
+        for spec in job.validators:
+            name = spec["name"]
+            if name == "distribution_bundle_ready":
+                ok = (
+                    artifact.exists()
+                    and bundle["publicationStatus"] == "not_published"
+                )
+                detail = (
+                    f"bundle={artifact}; external publication not executed"
+                )
+            else:
+                ok = False
+                detail = f"unsupported validator: {name}"
+            validation.append(
+                {"validator": name, "ok": ok, "detail": detail}
+            )
+
+        if not validation:
+            validation.append(
+                {
+                    "validator": "distribution_bundle_ready",
+                    "ok": artifact.exists(),
+                    "detail": (
+                        f"bundle={artifact}; external publication not executed"
+                    ),
+                }
+            )
+
+        status = (
+            "validated"
+            if all(item["ok"] for item in validation)
+            else "failed"
+        )
+        return self._result(
+            job_id=job.job_id,
+            idempotency_key=job.idempotency_key,
+            status=status,
+            started_at=started_at,
+            validation=validation,
+            artifacts=[
+                {
+                    "type": "distribution_bundle",
+                    "path": str(artifact),
+                    "track_id": track_id,
+                    "publication_status": "not_published",
+                }
+            ],
+            logs=[f"prepared distribution bundle for {title}"],
+            evidence_links=[str(artifact)],
+        )
+
     def _write_result(self, result: dict[str, Any]) -> Path:
-        path = self.results / f"{result['job_id']}{AUTOMATOR_RESULT_SUFFIX}"
+        path = self.results / (
+            f"{result['job_id']}{AUTOMATOR_RESULT_SUFFIX}"
+        )
         temp = path.with_suffix(path.suffix + ".tmp")
-        temp.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
+        temp.write_text(
+            json.dumps(result, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
         temp.replace(path)
         return path
 
@@ -294,14 +446,35 @@ class AutomatorQueueWorker:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="warpblack-automator",
-        description="Allowlisted WARPBLACK worker for BlackMamba Automator jobs",
+        description=(
+            "Allowlisted WARPBLACK worker for BlackMamba Automator jobs"
+        ),
     )
-    parser.add_argument("--queue", required=True, help="Shared Automator/WARPBLACK queue root")
-    parser.add_argument("--workspace", required=True, help="Allowed local workspace root")
-    parser.add_argument("--registry", default=str(DEFAULT_PROJECTS_FILE))
+    parser.add_argument(
+        "--queue",
+        required=True,
+        help="Shared Automator/WARPBLACK queue root",
+    )
+    parser.add_argument(
+        "--workspace",
+        required=True,
+        help="Allowed local workspace root",
+    )
+    parser.add_argument(
+        "--registry",
+        default=str(DEFAULT_PROJECTS_FILE),
+    )
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--once", action="store_true", help="Process at most one job")
-    mode.add_argument("--watch", action="store_true", help="Watch continuously")
+    mode.add_argument(
+        "--once",
+        action="store_true",
+        help="Process at most one job",
+    )
+    mode.add_argument(
+        "--watch",
+        action="store_true",
+        help="Watch continuously",
+    )
     parser.add_argument("--poll", type=float, default=2.0)
     return parser
 
@@ -319,6 +492,7 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             return 0
         return 0
+
     processed = worker.run_once()
     print(json.dumps({"ok": True, "processed": processed}))
     return 0
