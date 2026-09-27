@@ -17,6 +17,7 @@ dev = [
 
 [project.scripts]
 warpblack = "warpblack.cli:main"
+warpblack-automator = "warpblack.automator_queue:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
