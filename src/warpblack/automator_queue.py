@@ -92,6 +92,10 @@ class AutomatorJob:
         if not isinstance(requires_authorization, bool):
             raise TypeError("requires_authorization must be boolean")
 
+        authorization = payload.get("authorization")
+        if authorization is not None and not isinstance(authorization, dict):
+            raise TypeError("authorization must be an object or null")
+
         return cls(
             job_id=values["job_id"],
             idempotency_key=values["idempotency_key"],
@@ -104,6 +108,7 @@ class AutomatorJob:
             risk=values["risk"],
             evidence_targets=tuple(evidence_raw),
             requires_authorization=requires_authorization,
+            authorization=dict(authorization) if authorization is not None else None,
         )
 
 
@@ -125,9 +130,10 @@ class AutomatorQueueWorker:
         self.results = self.root / "results"
         self.processed = self.root / "processed"
         self.rejected = self.root / "rejected"
+        self.artifacts = self.root / "artifacts"
         self.workspace_root = Path(workspace_root).expanduser().resolve()
         self.project_registry_file = Path(project_registry_file).expanduser()
-        for path in (self.jobs, self.results, self.processed, self.rejected):
+        for path in (self.jobs, self.results, self.processed, self.rejected, self.artifacts):
             path.mkdir(parents=True, exist_ok=True)
 
     def run_once(self) -> int:
@@ -168,17 +174,25 @@ class AutomatorQueueWorker:
         path.replace(destination)
 
     def _execute(self, job: AutomatorJob, *, started_at: str) -> dict[str, Any]:
-        if job.requires_authorization or job.risk in BLOCKED_RISKS:
+        authorization_granted = bool(
+            job.authorization
+            and job.authorization.get("granted") is True
+            and isinstance(job.authorization.get("at"), str)
+        )
+        if (job.requires_authorization or job.risk in BLOCKED_RISKS) and not authorization_granted:
             return self._result(
                 job_id=job.job_id,
                 idempotency_key=job.idempotency_key,
                 status="blocked",
                 started_at=started_at,
-                errors=["WARPBLACK automator queue refuses authorization-gated/high-risk jobs"],
+                errors=["explicit authorization receipt required"],
             )
 
         if job.adapter == "workspace" and job.intent == "import_project_reference":
             return self._workspace_import(job, started_at=started_at)
+
+        if job.adapter == "distribution-work" and job.intent == "prepare_distribution_bundle":
+            return self._prepare_distribution_bundle(job, started_at=started_at)
 
         return self._result(
             job_id=job.job_id,
