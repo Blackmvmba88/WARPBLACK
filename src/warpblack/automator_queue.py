@@ -8,6 +8,7 @@ from pathlib import Path
 import time
 from typing import Any
 
+from .actions import ActionError, dispatch_action
 from .project_registry import DEFAULT_PROJECTS_FILE, ProjectRegistry, ProjectRegistryError
 
 
@@ -172,6 +173,7 @@ class AutomatorQueueWorker:
             TypeError,
             ValueError,
             ProjectRegistryError,
+            ActionError,
         ) as exc:
             job_id = (
                 job.job_id
@@ -211,6 +213,9 @@ class AutomatorQueueWorker:
 
         if job.adapter == "workspace" and job.intent == "import_project_reference":
             return self._workspace_import(job, started_at=started_at)
+
+        if job.adapter == "warpblack-action" and job.intent == "git.status":
+            return self._git_status(job, started_at=started_at)
 
         if (
             job.adapter == "distribution-work"
@@ -298,6 +303,64 @@ class AutomatorQueueWorker:
             ],
             logs=[f"registered workspace project {entry.name}"],
             evidence_links=[str(self.project_registry_file)],
+        )
+
+    def _git_status(
+        self,
+        job: AutomatorJob,
+        *,
+        started_at: str,
+    ) -> dict[str, Any]:
+        target = job.inputs.get("target", ".")
+        if not isinstance(target, str) or not target.strip():
+            raise ValueError("git.status requires a non-empty inputs.target")
+
+        action_result = dispatch_action(
+            "git.status",
+            {"target": target.strip()},
+            workspace_root=self.workspace_root,
+            request_id=f"automator:{job.job_id}",
+        )
+        ok = action_result.get("status") == "success" or action_result.get("ok") is True
+
+        validation: list[dict[str, Any]] = []
+        for spec in job.validators:
+            name = spec["name"]
+            if name == "git_status_returned":
+                validation.append(
+                    {
+                        "validator": name,
+                        "ok": ok,
+                        "detail": f"git.status target={target.strip()}",
+                    }
+                )
+            else:
+                validation.append(
+                    {
+                        "validator": name,
+                        "ok": False,
+                        "detail": f"unsupported validator: {name}",
+                    }
+                )
+
+        if not validation:
+            validation.append(
+                {
+                    "validator": "git_status_returned",
+                    "ok": ok,
+                    "detail": f"git.status target={target.strip()}",
+                }
+            )
+
+        status = "validated" if all(item["ok"] for item in validation) else "failed"
+        return self._result(
+            job_id=job.job_id,
+            idempotency_key=job.idempotency_key,
+            status=status,
+            started_at=started_at,
+            validation=validation,
+            diff={"git_status": action_result},
+            logs=[f"executed read-only git.status for {target.strip()}"],
         )
 
     def _prepare_distribution_bundle(
