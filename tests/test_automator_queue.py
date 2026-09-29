@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import warpblack.automator_queue as automator_queue
 from warpblack.automator_queue import AutomatorQueueWorker
 from warpblack.project_registry import ProjectRegistry
 
@@ -185,3 +186,62 @@ def test_authorization_gated_job_is_blocked(tmp_path: Path):
     )
     assert result["status"] == "blocked"
     assert result["artifacts"] == []
+
+
+def test_git_status_canary_round_trip(tmp_path: Path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    queue = tmp_path / "queue"
+    seen = {}
+
+    def fake_dispatch(action, args, *, workspace_root, approved=False, request_id=None, executor=None):
+        seen.update(
+            {
+                "action": action,
+                "args": args,
+                "workspace_root": str(workspace_root),
+                "request_id": request_id,
+            }
+        )
+        return {
+            "status": "success",
+            "intent": "git.status",
+            "data": {"branch": "main", "dirty": False},
+        }
+
+    monkeypatch.setattr(automator_queue, "dispatch_action", fake_dispatch)
+    worker = AutomatorQueueWorker(
+        queue_dir=queue,
+        workspace_root=workspace,
+        project_registry_file=tmp_path / "projects.json",
+    )
+    job = {
+        "job_id": "git-status-1",
+        "idempotency_key": "git-status-idem-1",
+        "source": "operator",
+        "project": "WARPBLACK",
+        "adapter": "warpblack-action",
+        "intent": "git.status",
+        "inputs": {
+            "trigger_kind": "workspace.git_status_requested",
+            "target": "WARPBLACK",
+        },
+        "validators": [{"name": "git_status_returned", "params": {}}],
+        "risk": "low",
+        "evidence_targets": ["local-jsonl"],
+        "requires_authorization": False,
+        "authorization": None,
+    }
+    job_path = worker.jobs / "git-status-1.warpblack-job.json"
+    job_path.write_text(json.dumps(job), encoding="utf-8")
+
+    assert worker.run_once() == 1
+    result = json.loads(
+        (worker.results / "git-status-1.warpblack-result.json").read_text(encoding="utf-8")
+    )
+    assert result["status"] == "validated"
+    assert result["validation"][0]["ok"] is True
+    assert result["diff"]["git_status"]["data"]["branch"] == "main"
+    assert seen["action"] == "git.status"
+    assert seen["args"] == {"target": "WARPBLACK"}
+    assert seen["request_id"] == "automator:git-status-1"
