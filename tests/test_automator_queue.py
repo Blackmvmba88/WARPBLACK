@@ -245,3 +245,60 @@ def test_git_status_canary_round_trip(tmp_path: Path, monkeypatch):
     assert seen["action"] == "git.status"
     assert seen["args"] == {"target": "WARPBLACK"}
     assert seen["request_id"] == "automator:git-status-1"
+
+
+def test_idempotency_key_suppresses_replay_execution(tmp_path: Path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    queue = tmp_path / "queue"
+    calls = []
+
+    def fake_dispatch(action, args, *, workspace_root, approved=False, request_id=None, executor=None):
+        calls.append((action, args, request_id))
+        return {
+            "status": "success",
+            "intent": "git.status",
+            "data": {"branch": "main", "dirty": False},
+        }
+
+    monkeypatch.setattr(automator_queue, "dispatch_action", fake_dispatch)
+    worker = AutomatorQueueWorker(
+        queue_dir=queue,
+        workspace_root=workspace,
+        project_registry_file=tmp_path / "projects.json",
+    )
+
+    def payload(job_id: str):
+        return {
+            "job_id": job_id,
+            "idempotency_key": "same-idempotency-key",
+            "source": "operator",
+            "project": "WARPBLACK",
+            "adapter": "warpblack-action",
+            "intent": "git.status",
+            "inputs": {"target": "WARPBLACK"},
+            "validators": [{"name": "git_status_returned", "params": {}}],
+            "risk": "low",
+            "evidence_targets": ["local-jsonl"],
+            "requires_authorization": False,
+            "authorization": None,
+        }
+
+    first = worker.jobs / "git-status-first.warpblack-job.json"
+    first.write_text(json.dumps(payload("git-status-first")), encoding="utf-8")
+    assert worker.run_once() == 1
+    assert len(calls) == 1
+
+    second = worker.jobs / "git-status-replay.warpblack-job.json"
+    second.write_text(json.dumps(payload("git-status-replay")), encoding="utf-8")
+    assert worker.run_once() == 1
+
+    replay = json.loads(
+        (worker.results / "git-status-replay.warpblack-result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert len(calls) == 1
+    assert replay["status"] == "validated"
+    assert replay["diff"]["git_status"]["data"]["branch"] == "main"
+    assert "idempotency replay suppressed execution" in replay["logs"][-1]
