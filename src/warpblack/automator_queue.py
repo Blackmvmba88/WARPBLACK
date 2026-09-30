@@ -165,7 +165,11 @@ class AutomatorQueueWorker:
             job = AutomatorJob.from_payload(
                 json.loads(path.read_text(encoding="utf-8"))
             )
-            result = self._execute(job, started_at=started)
+            previous = self._find_result_by_idempotency_key(job.idempotency_key)
+            if previous is None:
+                result = self._execute(job, started_at=started)
+            else:
+                result = self._replay_result(job, previous, started_at=started)
             destination = self.processed / path.name
         except (
             OSError,
@@ -192,6 +196,48 @@ class AutomatorQueueWorker:
 
         self._write_result(result)
         path.replace(destination)
+
+    def _find_result_by_idempotency_key(
+        self,
+        idempotency_key: str,
+    ) -> dict[str, Any] | None:
+        for path in sorted(self.results.glob(f"*{AUTOMATOR_RESULT_SUFFIX}")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if (
+                isinstance(payload, dict)
+                and payload.get("idempotency_key") == idempotency_key
+            ):
+                return payload
+        return None
+
+    def _replay_result(
+        self,
+        job: AutomatorJob,
+        previous: dict[str, Any],
+        *,
+        started_at: str,
+    ) -> dict[str, Any]:
+        previous_job_id = previous.get("job_id", "unknown")
+        previous_logs = previous.get("logs", [])
+        logs = list(previous_logs) if isinstance(previous_logs, list) else []
+        logs.append(
+            f"idempotency replay suppressed execution; original_job_id={previous_job_id}"
+        )
+        return self._result(
+            job_id=job.job_id,
+            idempotency_key=job.idempotency_key,
+            status=str(previous.get("status", "failed")),
+            started_at=started_at,
+            validation=list(previous.get("validation", [])),
+            diff=dict(previous.get("diff", {})),
+            artifacts=list(previous.get("artifacts", [])),
+            logs=logs,
+            errors=list(previous.get("errors", [])),
+            evidence_links=list(previous.get("evidence_links", [])),
+        )
 
     def _execute(self, job: AutomatorJob, *, started_at: str) -> dict[str, Any]:
         authorization_granted = bool(
