@@ -201,7 +201,14 @@ class AutomatorQueueWorker:
         self,
         idempotency_key: str,
     ) -> dict[str, Any] | None:
-        for path in sorted(self.results.glob(f"*{AUTOMATOR_RESULT_SUFFIX}")):
+        # Automator moves consumed results into processed; they must continue
+        # to suppress duplicate execution after ledger ingestion.
+        result_paths = [
+            path
+            for directory in (self.results, self.processed)
+            for path in directory.glob(f"*{AUTOMATOR_RESULT_SUFFIX}")
+        ]
+        for path in sorted(result_paths):
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):

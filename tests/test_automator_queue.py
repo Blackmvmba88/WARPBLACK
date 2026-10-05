@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import warpblack.automator_queue as automator_queue
+import pytest
+
+from warpblack import automator_queue
 from warpblack.automator_queue import AutomatorQueueWorker
 from warpblack.project_registry import ProjectRegistry
 
@@ -247,7 +249,8 @@ def test_git_status_canary_round_trip(tmp_path: Path, monkeypatch):
     assert seen["request_id"] == "automator:git-status-1"
 
 
-def test_idempotency_key_suppresses_replay_execution(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("archived", [False, True])
+def test_idempotency_key_suppresses_replay_execution(tmp_path: Path, monkeypatch, archived):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     queue = tmp_path / "queue"
@@ -288,6 +291,10 @@ def test_idempotency_key_suppresses_replay_execution(tmp_path: Path, monkeypatch
     first.write_text(json.dumps(payload("git-status-first")), encoding="utf-8")
     assert worker.run_once() == 1
     assert len(calls) == 1
+
+    if archived:
+        result_path = worker.results / "git-status-first.warpblack-result.json"
+        result_path.replace(worker.processed / result_path.name)
 
     second = worker.jobs / "git-status-replay.warpblack-job.json"
     second.write_text(json.dumps(payload("git-status-replay")), encoding="utf-8")
