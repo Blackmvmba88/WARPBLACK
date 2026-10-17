@@ -19,6 +19,7 @@ from warpblack.github_queue import (
 
 def make_issue(
     *,
+    issue_number: int = 7,
     actor: str = "Blackmvmba88",
     labels: list[str] | None = None,
     payload: dict[str, object] | None = None,
@@ -30,7 +31,7 @@ def make_issue(
     if payload is None:
         payload = {"protocol": JOB_PROTOCOL, "argv": ["git", "status"], "cwd": "."}
     return {
-        "number": 7,
+        "number": issue_number,
         "user": {"login": actor},
         "labels": [{"name": label} for label in labels],
         "body": json.dumps(payload),
@@ -238,6 +239,7 @@ def test_absorb_job_materializes_readme_without_approval(tmp_path: Path) -> None
 
     trigger = parse_issue_job(
         make_issue(
+            issue_number=8,
             payload={
                 "protocol": ABSORB_PROTOCOL,
                 "message": "bro, dame el README",
@@ -288,3 +290,31 @@ def test_bootstrap_creates_only_missing_control_labels(tmp_path: Path) -> None:
     assert result["labels"]["existing"] == [JOB_LABEL]
     assert result["labels"]["created"] == [APPROVAL_LABEL]
     assert control.created == [APPROVAL_LABEL]
+
+
+def test_duplicate_issue_is_claimed_only_once(tmp_path: Path) -> None:
+    class FakeControlPlane(GitHubControlPlane):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.calls = []
+
+        def _request_json(self, method, path, payload=None):
+            self.calls.append((method, path, payload))
+            return {}
+
+    control = FakeControlPlane(
+        token="token",
+        repository="owner/private-control",
+        allowed_actor="Blackmvmba88",
+        workspace_root=tmp_path,
+    )
+    job = parse_issue_job(make_issue(), allowed_actor="Blackmvmba88")
+    assert job is not None
+
+    control._execute_job(job)
+    control._execute_job(job)
+
+    comments = [call for call in control.calls if call[0] == "POST"]
+    closes = [call for call in control.calls if call[0] == "PATCH"]
+    assert len(comments) == 1
+    assert len(closes) == 1

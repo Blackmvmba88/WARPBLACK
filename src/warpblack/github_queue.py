@@ -211,8 +211,33 @@ class GitHubControlPlane:
             self.run_once()
             time.sleep(poll_interval_s)
 
+    def _claim_job(self, request_id: str) -> bool:
+        claim_dir = self.workspace_root / ".warpblack" / "github-claims"
+        claim_dir.mkdir(parents=True, exist_ok=True)
+        claim_name = hashlib.sha256(request_id.encode("utf-8")).hexdigest() + ".json"
+        claim_path = claim_dir / claim_name
+        try:
+            fd = os.open(claim_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return False
+
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(
+                {
+                    "request_id": request_id,
+                    "repository": self.repository,
+                    "claimed_at_unix": time.time(),
+                },
+                handle,
+                ensure_ascii=False,
+            )
+            handle.write("\n")
+        return True
+
     def _execute_job(self, job: GitHubJob) -> None:
         request_id = f"github:{self.repository}#{job.issue_number}"
+        if not self._claim_job(request_id):
+            return
         try:
             if isinstance(job, GitHubActionJob):
                 payload = dispatch_action(
