@@ -171,3 +171,16 @@ def test_spoofed_policy_evidence_does_not_certify(
     assert report["state"] == "NEEDS_REVIEW"
     assert report["attempted_reads"] == 1
     assert not report["verified"]
+
+
+def test_policy_denial_is_blocked_and_never_certified(
+    setup_workspace: dict, monkeypatch: pytest.MonkeyPatch,
+):
+    def deny(*args, **kwargs):
+        raise runtime_canary.PolicyError("policy denied")
+
+    monkeypatch.setattr(runtime_canary, "dispatch_action", deny)
+    result = runtime_canary.run_git_status_canary(**setup_workspace)
+    assert result["state"] == "BLOCKED"
+    assert result["verified"] is False
+    assert result["attempted_reads"] == 1
