@@ -88,5 +88,11 @@ No natural-language statement is authorization by itself for high-impact actions
 - Read-back includes actual artifacts, status and hashes; report differentiates attempted/verified/done.
 - Each migration slice has tests, rollback path and reviewable PR. No direct merge into main.
 
+## Implementation checkpoint (2026-10-16)
+- Step 2: `TaskEnvelopeV1` validator and contract tests are present on this branch.
+- Read-only execution slice: `runtime_canary` binds a proposed task to a registered workspace, typed `git.status`, a second status read-back, SHA-256 fingerprints, an audited executor, and an immutable at-most-once request record. See [READ_ONLY_CANARY.md](READ_ONLY_CANARY.md).
+- The Observer event stream is **not yet connected** to this ingress; neither generalized approval/ledger recovery nor write-task execution is included.
+- Isolated local test harness passed 11 focused cases with replacement dependencies; this is **not** equivalent to full repository tests or real-machine certification. Keep the PR in draft until CI runs actual steps and macOS acceptance passes.
+
 ## Immediate next engineering change
-Implement only Step 2 (typed, pure task contract + tests), then the read-only canary. Keep this document as the integration design decision; it is not a claim that the modules have been implemented.
+Wire one Observer event into `TaskEnvelopeV1` and this canary without granting additional capabilities; then run repository tests and the macOS acceptance before merging.
