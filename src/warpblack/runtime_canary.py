@@ -17,6 +17,7 @@ from .actions import ActionError, dispatch_action
 from .audit import AuditLedger
 from .executor import TerminalExecutor
 from .project_registry import DEFAULT_PROJECTS_FILE, ProjectRegistry
+from .policy import PolicyError
 from .task_envelope import TaskEnvelopeV1
 
 
@@ -140,7 +141,7 @@ def run_git_status_canary(
                 "git.status", {"target": str(project_path)}, workspace_root=root,
                 approved=False, request_id=child_id, executor=runner,
             )
-        except ActionError:
+        except (ActionError, PolicyError):
             blocked = True
             break
         reading = _safe_result(response, child_id)
