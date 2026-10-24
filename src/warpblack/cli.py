@@ -167,6 +167,8 @@ def build_parser() -> argparse.ArgumentParser:
     desktop_activate = desktop_sub.add_parser("activate", help="Bring an application to the front")
     desktop_activate.add_argument("application")
     desktop_activate.add_argument("--approve", action="store_true")
+    desktop_activate.add_argument("--expect-pid", type=int, required=True)
+    desktop_activate.add_argument("--expect-title", required=True)
     desktop_keys = desktop_sub.add_parser("keystroke", help="Send a keyboard chord")
     desktop_keys.add_argument("keys")
     desktop_keys.add_argument("--modifier", action="append", default=[])
@@ -376,7 +378,7 @@ def main(argv: list[str] | None = None) -> int:
                     expected_title=args.expect_title,
                 ).to_dict()
             elif args.desktop_command == "activate":
-                payload = activate_application(args.application, approved=args.approve).to_dict()
+                payload = activate_application(args.application, approved=args.approve, expected_pid=args.expect_pid, expected_title=args.expect_title).to_dict()
             elif args.desktop_command == "keystroke":
                 payload = keystroke(
                     args.keys,
