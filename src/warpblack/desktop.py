@@ -200,17 +200,34 @@ def _assert_focused_window(
     return current
 
 
-def activate_application(name: str, *, approved: bool = False) -> DesktopResult:
+def activate_application(
+    name: str,
+    *,
+    approved: bool = False,
+    expected_pid: int | None = None,
+    expected_title: str | None = None,
+) -> DesktopResult:
     if not approved:
         raise DesktopError("desktop mutation requires explicit approval")
-    safe = json.dumps(name)
-    _run_osascript([f"tell application {safe} to activate"])
-    current = focused_window().data
-    return DesktopResult(
-        True,
-        "activate",
-        {"application": name, "focused": current},
+    if expected_pid is None or expected_title is None:
+        raise DesktopError("activation requires exact PID and window title")
+    from .desktop_target import resolve_window
+
+    target = resolve_window(pid=expected_pid, title=expected_title, application=name)
+    # System Events addresses the selected process by Unix PID, not app name.
+    _run_osascript([
+        'tell application "System Events"',
+        f'set matches to application processes whose unix id is {expected_pid}',
+        'if (count of matches) is not 1 then error "target process disappeared"',
+        'set frontmost of item 1 of matches to true',
+        'end tell',
+    ])
+    current = _assert_focused_window(
+        expected_pid=expected_pid, expected_title=expected_title
     )
+    if current["application"] != name:
+        raise DesktopError("activated application identity mismatch")
+    return DesktopResult(True, "activate", {"application": name, "target": target, "focused": current})
 
 
 def keystroke(
