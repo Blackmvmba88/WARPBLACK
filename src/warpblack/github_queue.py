@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 import os
-from pathlib import Path
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, TypeAlias
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
@@ -18,7 +18,6 @@ from .executor import TerminalExecutor
 from .models import CommandRequest
 from .policy import PolicyError
 from .readme_absorb import ReadmeAbsorber
-
 
 JOB_PROTOCOL = "warpblack-job-v1"
 ABSORB_PROTOCOL = "warpblack-absorb-v1"

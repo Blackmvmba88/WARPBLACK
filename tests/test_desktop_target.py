@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import pytest
-from warpblack.desktop import DesktopError, DesktopResult
+
 import warpblack.desktop_target as target
+from warpblack.desktop import DesktopError, DesktopResult
 
 
 @pytest.fixture

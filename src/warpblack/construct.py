@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
-from pathlib import Path
 import re
 import unicodedata
-from typing import Sequence
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from uuid import uuid4
 
 from .executor import TerminalExecutor
 from .models import CommandRequest, ExecutionResult
 from .policy import PolicyError
 from .readme_absorb import ReadmeAbsorber
-
 
 CONSTRUCT_TRIGGERS = ("construyelo", "construye lo")
 MAX_PATCH_BYTES = 512 * 1024

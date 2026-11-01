@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
+
+import pytest
 
 from warpblack.audit import AuditLedger
 from warpblack.executor import TerminalExecutor
 from warpblack.models import CommandRequest
+from warpblack.policy import PolicyError
 
 
 def test_audit_ledger_correlates_without_raw_streams_or_args(tmp_path: Path) -> None:
@@ -56,10 +59,8 @@ def test_denied_execution_is_also_audited(tmp_path: Path) -> None:
         source="test",
     )
 
-    try:
+    with pytest.raises(PolicyError, match="sudo"):
         executor.execute(request)
-    except Exception:
-        pass
 
     record = json.loads(audit_path.read_text(encoding="utf-8"))
     assert record["event"] == "execution_denied"

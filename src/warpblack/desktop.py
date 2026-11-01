@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
 import json
-from pathlib import Path
 import platform
 import subprocess
 import tempfile
-from typing import Sequence
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from .executor import TerminalExecutor
 from .models import CommandRequest

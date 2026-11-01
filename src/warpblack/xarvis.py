@@ -5,7 +5,6 @@ from typing import Any
 
 from warpblack.client import WarpClient
 
-
 PROTOCOL = "xarvis-warpblack-v1"
 EXECUTE_ACTION = "terminal.execute"
 HEALTH_ACTION = "terminal.health"

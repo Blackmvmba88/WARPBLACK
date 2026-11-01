@@ -6,20 +6,19 @@ capability may execute. This module never accepts an argv or approval from a tas
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import hashlib
 import json
 import os
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 from .actions import ActionError, dispatch_action
 from .audit import AuditLedger
 from .executor import TerminalExecutor
-from .project_registry import DEFAULT_PROJECTS_FILE, ProjectRegistry
 from .policy import PolicyError
+from .project_registry import DEFAULT_PROJECTS_FILE, ProjectRegistry
 from .task_envelope import TaskEnvelopeV1
-
 
 DEFAULT_STATE_DIR = "~/.warpblack/modular-canary"
 

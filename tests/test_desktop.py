@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-import warpblack.desktop as desktop
+from warpblack import desktop
 from warpblack.desktop import (
     DesktopError,
     DesktopResult,
@@ -37,7 +37,7 @@ def test_focused_window_returns_pid_title_and_frontmost(monkeypatch) -> None:
     monkeypatch.setattr(
         desktop,
         "_run_osascript",
-        lambda lines: "Blender\t60293\ttrue\tCOMBI_TOPOLOGIA_PRO.blend - Blender 5.2.0 LTS",
+        lambda lines, *, executor=None, request_id=None: "Blender\t60293\ttrue\tCOMBI_TOPOLOGIA_PRO.blend - Blender 5.2.0 LTS",
     )
 
     payload = focused_window().to_dict()
@@ -54,7 +54,7 @@ def test_windows_keep_multiple_same_app_instances_separate(monkeypatch) -> None:
     monkeypatch.setattr(
         desktop,
         "_run_osascript",
-        lambda lines: (
+        lambda lines, *, executor=None, request_id=None: (
             "Blender\t60001\tfalse\tUntitled - Blender 5.2.0 LTS\n"
             "Blender\t60293\ttrue\tCOMBI_TOPOLOGIA_PRO.blend - Blender 5.2.0 LTS"
         ),
@@ -71,7 +71,7 @@ def test_click_fails_closed_on_pid_mismatch(monkeypatch) -> None:
     monkeypatch.setattr(
         desktop,
         "_run_osascript",
-        lambda lines: "Blender\t60293\ttrue\tCOMBI_TOPOLOGIA_PRO.blend",
+        lambda lines, *, executor=None, request_id=None: "Blender\t60293\ttrue\tCOMBI_TOPOLOGIA_PRO.blend",
     )
 
     with pytest.raises(DesktopError, match="PID mismatch"):
@@ -82,7 +82,7 @@ def test_click_fails_closed_on_title_mismatch(monkeypatch) -> None:
     monkeypatch.setattr(
         desktop,
         "_run_osascript",
-        lambda lines: "Blender\t60293\ttrue\tCOMBI_TOPOLOGIA_PRO.blend",
+        lambda lines, *, executor=None, request_id=None: "Blender\t60293\ttrue\tCOMBI_TOPOLOGIA_PRO.blend",
     )
 
     with pytest.raises(DesktopError, match="title mismatch"):

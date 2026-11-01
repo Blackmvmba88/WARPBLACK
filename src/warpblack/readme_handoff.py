@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
-from .construct import PatchConstructor, ConstructResult
+from .construct import ConstructResult, PatchConstructor
 from .readme_absorb import AbsorbResult, ReadmeAbsorber
 
 

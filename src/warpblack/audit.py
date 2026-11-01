@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,7 @@ class AuditLedger:
     ) -> None:
         payload: dict[str, Any] = {
             "event": "execution_result",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "request_id": request.request_id,
             "source": source,
             "actor": actor,
@@ -55,7 +55,7 @@ class AuditLedger:
         self._append(
             {
                 "event": "execution_denied",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "request_id": request.request_id,
                 "source": source,
                 "actor": actor,

@@ -1,5 +1,5 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
 import pytest
 
@@ -51,6 +51,10 @@ def test_manual_order_is_independent_from_filesystem_name(tmp_path: Path) -> Non
 
     assert [item.name for item in registry.entries] == ["ccc", "aaa", "bbb"]
     assert [item.order for item in registry.entries] == [0, 1, 2]
+    reloaded = ProjectRegistry(state)
+    assert [item.name for item in reloaded.entries] == ["ccc", "aaa", "bbb"]
+    reloaded.move("ccc", 2)
+    assert [item.name for item in ProjectRegistry(state).entries] == ["aaa", "bbb", "ccc"]
 
 
 def test_scan_discovers_nested_projects_and_skips_build_folders(tmp_path: Path) -> None:

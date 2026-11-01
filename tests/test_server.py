@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+import threading
 from contextlib import contextmanager
 from pathlib import Path
-import threading
 
 import pytest
 
 from warpblack.client import WarpClient, WarpClientError
 from warpblack.server import BridgeConfig, WarpHTTPServer
-
 
 TOKEN = "warpblack-test-token-1234567890"
 
@@ -41,7 +40,15 @@ def test_health_and_capabilities(tmp_path: Path) -> None:
         assert "intent-plan" in capabilities["capabilities"]
         assert "intent-execute" in capabilities["capabilities"]
         registered = {item["name"] for item in capabilities["registered"]}
-        assert registered == {"files.read", "git.status"}
+        assert registered == {
+            "files.read",
+            "git.status",
+            "blender.object.translate_restore",
+            "blender.object.translate_restore_certify",
+        }
+        for capability in capabilities["registered"]:
+            if capability["name"].startswith("blender."):
+                assert capability["requires_approval"] is True
 
 
 def test_wrong_token_is_rejected(tmp_path: Path) -> None:

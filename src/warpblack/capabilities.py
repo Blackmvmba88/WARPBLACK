@@ -8,7 +8,6 @@ from .contracts import Capability, ExecutionPlan, IntentEnvelope, ResultEnvelope
 from .executor import TerminalExecutor
 from .models import CommandRequest
 
-
 MAX_READ_BYTES = 256 * 1024
 
 

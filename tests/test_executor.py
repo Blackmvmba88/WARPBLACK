@@ -1,5 +1,5 @@
-from pathlib import Path
 import sys
+from pathlib import Path
 
 from warpblack.executor import TerminalExecutor
 from warpblack.models import CommandRequest

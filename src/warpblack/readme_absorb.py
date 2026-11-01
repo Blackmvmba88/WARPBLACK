@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import re
 import unicodedata
-from typing import Iterable
-
+from collections.abc import Iterable
+from dataclasses import dataclass
+from pathlib import Path
 
 TRIGGER_PHRASES = ("dame el readme", "dame el read me")
 SCHEMA_VERSION = 1
@@ -106,7 +105,7 @@ class ReadmeAbsorber:
 
         raw = json.loads(self.state_path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
-            raise ValueError("README absorber state must be a JSON object")
+            raise ValueError("README absorber state must be a JSON object")  # noqa: TRY004 - invalid serialized JSON value
         if raw.get("schema_version") != SCHEMA_VERSION:
             raise ValueError("unsupported README absorber state schema")
 

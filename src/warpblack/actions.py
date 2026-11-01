@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
-import subprocess
 from typing import Any
 
 from .capabilities import CapabilityError, CapabilityRegistry
 from .contracts import IntentEnvelope
-from .desktop import DesktopError, capture_screen, focused_window, frontmost_application, list_windows
+from .desktop import (
+    DesktopError,
+    capture_screen,
+    focused_window,
+    frontmost_application,
+    list_windows,
+)
 from .executor import TerminalExecutor
-
 
 ACTION_PROTOCOL = "warpblack-action-v1"
 

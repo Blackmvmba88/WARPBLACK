@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hmac
 import json
-from pathlib import Path
 import threading
+from dataclasses import dataclass
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 from .audit import AuditLedger
@@ -16,7 +16,6 @@ from .executor import TerminalExecutor
 from .models import CommandRequest
 from .policy import PolicyError
 from .readme_absorb import ReadmeAbsorber
-
 
 MAX_BODY_BYTES = 64 * 1024
 
@@ -65,7 +64,7 @@ class WarpHTTPServer(ThreadingHTTPServer):
 class WarpRequestHandler(BaseHTTPRequestHandler):
     server: WarpHTTPServer
 
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A002
+    def log_message(self, format: str, *args: object) -> None:
         return
 
     def _json(self, status: int, payload: dict[str, Any]) -> None:
@@ -84,7 +83,7 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
             return False
         return hmac.compare_digest(header[len(prefix) :], self.server.config.token)
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         if self.path == "/v1/health":
             self._json(
                 200,
@@ -122,7 +121,7 @@ class WarpRequestHandler(BaseHTTPRequestHandler):
             return
         self._json(404, {"ok": False, "error": "not found"})
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         if self.path not in {
             "/v1/execute",
             "/v1/readme/absorb",

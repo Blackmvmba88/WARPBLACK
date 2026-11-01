@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import json
-from pathlib import Path
 import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from .actions import ActionError, dispatch_action
 from .project_registry import DEFAULT_PROJECTS_FILE, ProjectRegistry, ProjectRegistryError
-
 
 AUTOMATOR_JOB_SUFFIX = ".warpblack-job.json"
 AUTOMATOR_RESULT_SUFFIX = ".warpblack-result.json"
@@ -18,7 +17,7 @@ BLOCKED_RISKS = {"high", "irreversible"}
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _inside(root: Path, candidate: Path) -> bool:
@@ -45,7 +44,7 @@ class AutomatorJob:
     authorization: dict[str, Any] | None = None
 
     @classmethod
-    def from_payload(cls, payload: object) -> "AutomatorJob":
+    def from_payload(cls, payload: object) -> AutomatorJob:
         if not isinstance(payload, dict):
             raise TypeError("automator job must be a JSON object")
 
@@ -437,9 +436,9 @@ class AutomatorQueueWorker:
         if not isinstance(title, str) or not title.strip():
             raise ValueError("distribution request requires title")
         if not isinstance(metadata, dict):
-            raise ValueError("distribution request requires metadata object")
+            raise ValueError("distribution request requires metadata object")  # noqa: TRY004 - invalid serialized JSON value
         if not isinstance(assets, dict):
-            raise ValueError("distribution request requires assets object")
+            raise ValueError("distribution request requires assets object")  # noqa: TRY004 - invalid serialized JSON value
 
         bundle = {
             "schema": "blackmamba.distribution.bundle.v1",

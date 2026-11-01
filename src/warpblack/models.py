@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Sequence
 from uuid import uuid4
 
 
@@ -23,7 +23,7 @@ class CommandRequest:
         timeout_s: float = 60.0,
         approved: bool = False,
         request_id: str | None = None,
-    ) -> "CommandRequest":
+    ) -> CommandRequest:
         if not argv:
             raise ValueError("argv must not be empty")
         correlation_id = request_id or uuid4().hex
