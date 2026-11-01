@@ -1,30 +1,30 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import json
 import os
-from pathlib import Path
 import sys
+from dataclasses import asdict
+from pathlib import Path
 
 from .audit import AuditLedger
 from .capabilities import CapabilityError, CapabilityRegistry
-from .contracts import IntentEnvelope
 from .client import WarpClient, WarpClientError
 from .construct import PatchConstructor
-from .doctor import run_doctor
-from .desktop_agent import click_label, inspect_ui
-from .desktop_visual import click_visual_box, visual_snapshot
+from .contracts import IntentEnvelope
 from .desktop import (
     DesktopError,
     activate_application,
     capture_screen,
     click_at,
-    frontmost_application,
     focused_window,
+    frontmost_application,
     keystroke,
     list_windows,
 )
+from .desktop_agent import click_label, inspect_ui
+from .desktop_visual import click_visual_box, visual_snapshot
+from .doctor import run_doctor
 from .executor import TerminalExecutor
 from .github_queue import GitHubControlPlane, GitHubQueueError, token_from_env
 from .models import CommandRequest
@@ -32,7 +32,6 @@ from .policy import PolicyError
 from .project_registry import DEFAULT_PROJECTS_FILE, ProjectRegistry, ProjectRegistryError
 from .readme_absorb import ReadmeAbsorber
 from .server import BridgeConfig, serve
-
 
 DEFAULT_URL = "http://127.0.0.1:8765"
 DEFAULT_AUDIT_LOG = "~/.warpblack/audit.jsonl"

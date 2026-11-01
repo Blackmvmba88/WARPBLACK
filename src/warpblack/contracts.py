@@ -13,7 +13,7 @@ class IntentEnvelope:
     request_id: str = ""
 
     @classmethod
-    def from_payload(cls, payload: object) -> "IntentEnvelope":
+    def from_payload(cls, payload: object) -> IntentEnvelope:
         if not isinstance(payload, dict):
             raise TypeError("intent payload must be a JSON object")
 

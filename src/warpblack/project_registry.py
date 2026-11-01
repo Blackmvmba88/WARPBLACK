@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 import hashlib
 import json
 import os
-from pathlib import Path
 import tempfile
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
-
 
 DEFAULT_PROJECTS_FILE = "~/.warpblack/projects.json"
 PROJECT_MARKERS = (
@@ -41,7 +40,7 @@ class ProjectEntry:
     metadata: dict[str, Any] | None = None
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "ProjectEntry":
+    def from_dict(cls, payload: dict[str, Any]) -> ProjectEntry:
         return cls(
             id=str(payload["id"]),
             name=str(payload["name"]),
@@ -210,8 +209,9 @@ class ProjectRegistry:
 
         bounded = max(0, min(position, len(ordered)))
         ordered.insert(bounded, entry)
+        for index, item in enumerate(ordered):
+            item.order = index
         self._entries = ordered
-        self._normalize_order()
 
     def _normalize_order(self) -> None:
         self._entries.sort(key=lambda item: item.order)
@@ -259,7 +259,7 @@ def _project_id(path: Path) -> str:
 
 
 def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _inspect_project(path: Path) -> dict[str, Any]:

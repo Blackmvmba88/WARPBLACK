@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import pytest
-import warpblack.desktop as desktop
+
+from warpblack import desktop
 from warpblack.desktop import DesktopError, activate_application
 
 

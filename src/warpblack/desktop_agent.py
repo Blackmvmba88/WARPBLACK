@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import hashlib
 import math
-from pathlib import Path
 import tempfile
 import time
-from typing import Sequence
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from uuid import uuid4
 
 from .desktop import (
@@ -18,7 +18,6 @@ from .desktop import (
     click_at,
     focused_window,
 )
-
 
 ACTIONABLE_ROLES = {
     "AXButton",

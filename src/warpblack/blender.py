@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import hashlib
 import json
 import math
-from pathlib import Path
 import shutil
 import subprocess
 import textwrap
-
+from dataclasses import dataclass
+from pathlib import Path
 
 RESULT_PREFIX = "WARPBLACK_BLENDER_RESULT="
 MAX_DELTA_M = 0.25
@@ -234,8 +233,7 @@ def translate_restore(
         command,
         cwd=blend_file.parent,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         timeout=timeout_s,
         check=False,
     )

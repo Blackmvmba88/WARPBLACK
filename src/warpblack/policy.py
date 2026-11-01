@@ -4,7 +4,6 @@ from pathlib import Path
 
 from .models import CommandRequest, PolicyDecision
 
-
 HARD_DENY = {
     "sudo",
     "su",

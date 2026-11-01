@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import math
-from pathlib import Path
 
 import pytest
 
 import warpblack.desktop_visual as visual
 from warpblack.desktop import DesktopError, DesktopResult
 from warpblack.desktop_visual import click_visual_box
-
 
 FOCUS = {"application": "Blender", "pid": 77, "title": "Scene.blend"}
 SHA = "a" * 64

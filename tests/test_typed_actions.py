@@ -1,11 +1,10 @@
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 
-import warpblack.actions as actions
-import warpblack.github_queue as github_queue
+from warpblack import actions, github_queue
 from warpblack.actions import ACTION_PROTOCOL, ActionError, dispatch_action
 from warpblack.audit import AuditLedger
 from warpblack.desktop import DesktopError, DesktopResult

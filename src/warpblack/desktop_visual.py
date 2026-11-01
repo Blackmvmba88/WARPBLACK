@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import hashlib
 import math
-from pathlib import Path
 import subprocess
 import tempfile
 import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from uuid import uuid4
 
 from .desktop import (

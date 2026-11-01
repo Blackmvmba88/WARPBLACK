@@ -1,9 +1,9 @@
 """Versioned, execution-free task envelope for modular BlackMamba handoffs."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from typing import Any, Literal, Mapping
-from uuid import UUID
+from typing import Any, Literal
 
 State = Literal["PROPOSED", "APPROVED", "RUNNING", "BLOCKED", "NEEDS_REVIEW", "VERIFIED", "DONE"]
 Risk = Literal["read_only", "mutation", "high_impact"]
@@ -43,7 +43,7 @@ class TaskEnvelopeV1:
     expected: tuple[str, ...]
 
     @classmethod
-    def parse(cls, raw: Mapping[str, Any]) -> "TaskEnvelopeV1":
+    def parse(cls, raw: Mapping[str, Any]) -> TaskEnvelopeV1:
         if not isinstance(raw, Mapping) or set(raw) != FIELDS:
             raise ValueError("invalid envelope fields")
         if type(raw["schema_version"]) is not int or raw["schema_version"] != 1:
@@ -70,7 +70,7 @@ class TaskEnvelopeV1:
             expected=expected_tuple,
         )
 
-    def transition(self, next_state: State, *, evidence_ref: str | None = None) -> "TaskEnvelopeV1":
+    def transition(self, next_state: State, *, evidence_ref: str | None = None) -> TaskEnvelopeV1:
         if next_state not in TRANSITIONS[self.state]:
             raise ValueError(f"invalid transition: {self.state} -> {next_state}")
         if next_state == "APPROVED" and self.risk != "read_only" and not self.approval_ref:
