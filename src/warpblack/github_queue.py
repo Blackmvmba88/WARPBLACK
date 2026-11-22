@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import errno
 import json
 import os
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Iterator
 from pathlib import Path
 from typing import Any, TypeAlias
 from urllib.error import HTTPError, URLError
@@ -86,6 +89,41 @@ def _job_type(job: GitHubJob) -> str:
     if isinstance(job, GitHubAbsorbJob):
         return "absorb"
     return "command"
+
+
+@contextmanager
+def _watcher_lock(repository: str) -> Iterator[None]:
+    """One GitHub watcher per user/repository on this machine, across workspaces."""
+    directory = Path.home() / ".warpblack" / "watch-locks"
+    directory.mkdir(parents=True, exist_ok=True)
+    name = hashlib.sha256(repository.lower().encode("utf-8")).hexdigest() + ".lock"
+    with (directory / name).open("a+b") as handle:
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                handle.seek(0)
+                handle.write(b"\\0")
+                handle.flush()
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK):
+                raise GitHubQueueError(
+                    f"another WARPBLACK watcher already controls {repository} on this machine"
+                ) from exc
+            raise
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 class GitHubControlPlane:
@@ -205,13 +243,14 @@ class GitHubControlPlane:
     def watch(self, *, poll_interval_s: float = 5.0) -> None:
         if poll_interval_s < 1.0:
             raise ValueError("poll interval must be at least 1 second")
-        self.assert_private_repository()
-        while True:
-            self.run_once()
-            time.sleep(poll_interval_s)
+        with _watcher_lock(self.repository):
+            self.assert_private_repository()
+            while True:
+                self.run_once()
+                time.sleep(poll_interval_s)
 
     def _claim_job(self, request_id: str) -> bool:
-        claim_dir = self.workspace_root / ".warpblack" / "github-claims"
+        claim_dir = Path.home() / ".warpblack" / "github-claims"
         claim_dir.mkdir(parents=True, exist_ok=True)
         claim_name = hashlib.sha256(request_id.encode("utf-8")).hexdigest() + ".json"
         claim_path = claim_dir / claim_name

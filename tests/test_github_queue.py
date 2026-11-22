@@ -13,8 +13,49 @@ from warpblack.github_queue import (
     GitHubConstructJob,
     GitHubControlPlane,
     GitHubQueueError,
+    _watcher_lock,
     parse_issue_job,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_warpblack_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+
+def test_single_watcher_lock_blocks_duplicate_across_workspaces() -> None:
+    with _watcher_lock("owner/control"):
+        with pytest.raises(GitHubQueueError, match="another WARPBLACK watcher"):
+            with _watcher_lock("OWNER/control"):
+                pass
+
+    # The lock is released automatically when the first watcher stops.
+    with _watcher_lock("owner/control"):
+        pass
+
+
+def test_different_control_repos_can_watch_simultaneously() -> None:
+    with _watcher_lock("owner/one"):
+        with _watcher_lock("owner/two"):
+            pass
+
+
+def test_claims_are_shared_between_workspaces(tmp_path: Path) -> None:
+    one = GitHubControlPlane(
+        token="token",
+        repository="owner/control",
+        allowed_actor="Blackmvmba88",
+        workspace_root=tmp_path / "first",
+    )
+    two = GitHubControlPlane(
+        token="token",
+        repository="owner/control",
+        allowed_actor="Blackmvmba88",
+        workspace_root=tmp_path / "second",
+    )
+    assert one._claim_job("github:owner/control#100") is True
+    assert two._claim_job("github:owner/control#100") is False
 
 
 def make_issue(
